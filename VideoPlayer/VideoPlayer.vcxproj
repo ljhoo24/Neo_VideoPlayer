@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  VideoPlayer.vcxproj
+  Qt 6.8.3 (MSVC 2022/2025 x64) + libmpv
+  MOC is run as a CustomBuild step on Q_OBJECT headers.
+  Generated moc_*.cpp land in the "generated\" subfolder.
+-->
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- ================================================================
+       Configurations  (x64 only — libmpv dev is 64-bit)
+       ================================================================ -->
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <!-- ================================================================
+       Global properties
+       ================================================================ -->
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{65572875-693e-4c50-9c7c-db2ddeffd250}</ProjectGuid>
+    <RootNamespace>VideoPlayer</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <!-- ================================================================
+       Per-configuration: toolset + runtime
+       ================================================================ -->
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <!-- ================================================================
+       Qt 6 and libmpv path macros
+       Override from the command line:
+         msbuild /p:Qt6Root=D:\Qt\6.8.3\msvc2022_64
+         msbuild /p:MpvRoot=D:\tools\mpv-dev-x86_64
+       ================================================================ -->
+  <PropertyGroup Label="QtMpvPaths">
+    <Qt6Root Condition="'$(Qt6Root)'==''">C:\Qt\6.8.3\msvc2022_64</Qt6Root>
+    <Qt6Bin>$(Qt6Root)\bin</Qt6Bin>
+    <Qt6Inc>$(Qt6Root)\include</Qt6Inc>
+    <Qt6Lib>$(Qt6Root)\lib</Qt6Lib>
+    <MpvRoot Condition="'$(MpvRoot)'==''">C:\tools\mpv-dev-x86_64</MpvRoot>
+    <MpvInc>$(MpvRoot)\include</MpvInc>
+  </PropertyGroup>
+  <PropertyGroup Label="UserMacros" />
+  <!-- ================================================================
+       Compiler / linker  — DEBUG x64
+       ================================================================ -->
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <PreprocessorDefinitions>_DEBUG;_WINDOWS;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)generated;$(Qt6Inc);$(Qt6Inc)\QtCore;$(Qt6Inc)\QtGui;$(Qt6Inc)\QtWidgets;$(Qt6Inc)\QtSql;$(MpvInc);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <!-- /Zc:__cplusplus : Qt checks this macro to verify C++17+ compliance  -->
+      <!-- /permissive-    : strict standard conformance (also needed by Qt)    -->
+      <!-- /utf-8          : source and execution charset both UTF-8            -->
+      <AdditionalOptions>/Zc:__cplusplus /permissive- /utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(Qt6Lib);$(MpvRoot);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <!-- Qt6EntryPointd.lib provides WinMain which calls the standard main()  -->
+      <AdditionalDependencies>Qt6Widgetsd.lib;Qt6Sqld.lib;Qt6Guid.lib;Qt6Cored.lib;Qt6EntryPointd.lib;mpv.lib;opengl32.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <PostBuildEvent>
+      <Command>IF NOT EXIST "$(OutDir)" mkdir "$(OutDir)"
+copy /Y "$(MpvRoot)\libmpv-2.dll" "$(OutDir)"
+IF NOT EXIST "$(OutDir)shaders" mkdir "$(OutDir)shaders"
+copy /Y "$(ProjectDir)shaders\NVScaler.glsl" "$(OutDir)shaders\"
+"$(Qt6Bin)\windeployqt.exe" --debug --no-translations "$(OutDir)$(TargetFileName)"</Command>
+      <Message>Deploying Qt + mpv DLLs + shaders (Debug)...</Message>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <!-- ================================================================
+       Compiler / linker  — RELEASE x64
+       ================================================================ -->
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <PreprocessorDefinitions>NDEBUG;_WINDOWS;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)generated;$(Qt6Inc);$(Qt6Inc)\QtCore;$(Qt6Inc)\QtGui;$(Qt6Inc)\QtWidgets;$(Qt6Inc)\QtSql;$(MpvInc);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <AdditionalOptions>/Zc:__cplusplus /permissive- /utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalLibraryDirectories>$(Qt6Lib);$(MpvRoot);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <!-- Qt6EntryPoint.lib provides WinMain which calls the standard main()  -->
+      <AdditionalDependencies>Qt6Widgets.lib;Qt6Sql.lib;Qt6Gui.lib;Qt6Core.lib;Qt6EntryPoint.lib;mpv.lib;opengl32.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <PostBuildEvent>
+      <Command>IF NOT EXIST "$(OutDir)" mkdir "$(OutDir)"
+copy /Y "$(MpvRoot)\libmpv-2.dll" "$(OutDir)"
+IF NOT EXIST "$(OutDir)shaders" mkdir "$(OutDir)shaders"
+copy /Y "$(ProjectDir)shaders\NVScaler.glsl" "$(OutDir)shaders\"
+"$(Qt6Bin)\windeployqt.exe" --release --no-translations "$(OutDir)$(TargetFileName)"</Command>
+      <Message>Deploying Qt + mpv DLLs + shaders (Release)...</Message>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <!-- ================================================================
+       Source files (.cpp)
+       ================================================================ -->
+  <ItemGroup>
+    <ResourceCompile Include="app.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="MainWindow.cpp" />
+    <ClCompile Include="DatabaseManager.cpp" />
+    <ClCompile Include="MpvPlayerWidget.cpp" />
+    <ClCompile Include="PlaylistModel.cpp" />
+    <ClCompile Include="OptionsDialog.cpp" />
+    <!-- MOC-generated translation units (built by the CustomBuild rules below) -->
+    <ClCompile Include="generated\moc_MainWindow.cpp" />
+    <ClCompile Include="generated\moc_MpvPlayerWidget.cpp" />
+    <ClCompile Include="generated\moc_PlaylistModel.cpp" />
+    <ClCompile Include="generated\moc_OptionsDialog.cpp" />
+  </ItemGroup>
+  <!-- ================================================================
+       Header files
+         - DatabaseManager.h : no Q_OBJECT  → ClInclude
+         - Others            : have Q_OBJECT → CustomBuild runs moc.exe
+       ================================================================ -->
+  <ItemGroup>
+    <ClInclude Include="DatabaseManager.h" />
+    <CustomBuild Include="MainWindow.h">
+      <Message>MOC %(Filename).h</Message>
+      <Command>"$(Qt6Bin)\moc.exe" "%(FullPath)" -o "$(ProjectDir)generated\moc_%(Filename).cpp"</Command>
+      <Outputs>$(ProjectDir)generated\moc_%(Filename).cpp</Outputs>
+      <AdditionalInputs>%(FullPath)</AdditionalInputs>
+    </CustomBuild>
+    <CustomBuild Include="MpvPlayerWidget.h">
+      <Message>MOC %(Filename).h</Message>
+      <Command>"$(Qt6Bin)\moc.exe" "%(FullPath)" -o "$(ProjectDir)generated\moc_%(Filename).cpp"</Command>
+      <Outputs>$(ProjectDir)generated\moc_%(Filename).cpp</Outputs>
+      <AdditionalInputs>%(FullPath)</AdditionalInputs>
+    </CustomBuild>
+    <CustomBuild Include="PlaylistModel.h">
+      <Message>MOC %(Filename).h</Message>
+      <Command>"$(Qt6Bin)\moc.exe" "%(FullPath)" -o "$(ProjectDir)generated\moc_%(Filename).cpp"</Command>
+      <Outputs>$(ProjectDir)generated\moc_%(Filename).cpp</Outputs>
+      <AdditionalInputs>%(FullPath)</AdditionalInputs>
+    </CustomBuild>
+    <CustomBuild Include="OptionsDialog.h">
+      <Message>MOC %(Filename).h</Message>
+      <Command>"$(Qt6Bin)\moc.exe" "%(FullPath)" -o "$(ProjectDir)generated\moc_%(Filename).cpp"</Command>
+      <Outputs>$(ProjectDir)generated\moc_%(Filename).cpp</Outputs>
+      <AdditionalInputs>%(FullPath)</AdditionalInputs>
+    </CustomBuild>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

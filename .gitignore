@@ -1,0 +1,64 @@
+# ============================================================
+# Build output
+# ============================================================
+/build/
+/x64/
+VideoPlayer/x64/
+VideoPlayer/VideoPlayer/    # MSBuild intermediate output dir (same name as project)
+
+# Qt moc/uic/rcc generated sources — CMake AUTOMOC and qmake regenerate
+# these on every build, no value in tracking them.
+VideoPlayer/generated/
+
+# Object/binary/intermediate
+*.obj
+*.o
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.idb
+*.tlog
+*.log
+*.exe
+*.dll
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+cmake_install.cmake
+Makefile
+
+# qmake
+*.pro.user
+*.pro.user.*
+Makefile.Debug
+Makefile.Release
+
+# ============================================================
+# IDE / editor state
+# ============================================================
+.vs/
+.vscode/
+.idea/
+*.suo
+*.sln.docstates
+*.vcxproj.user
+*.user
+*.swp
+*~
+
+# ============================================================
+# Tooling caches
+# ============================================================
+.claude/            # Claude Code per-user state
+__pycache__/
+*.pyc
+
+# ============================================================
+# OS junk
+# ============================================================
+Thumbs.db
+Desktop.ini
+.DS_Store
