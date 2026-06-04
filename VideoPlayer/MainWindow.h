@@ -40,6 +40,12 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override = default;
 
+    // Open and immediately play a file passed from outside the app —
+    // typically argv[1] when Windows launches us via "Open with" or a
+    // default-app file association. Registers the file in the playlist
+    // (idempotent) and starts playback. Safe to call right after show().
+    void openExternalFile(const QString& path);
+
     // ---- Repeat mode ----
     enum class RepeatMode { None, One, All };
 
