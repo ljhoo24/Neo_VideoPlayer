@@ -172,6 +172,25 @@ bool DatabaseManager::updateThumbnail(int id, const QString& thumbnailPath)
     return true;
 }
 
+bool DatabaseManager::bumpToFront(int id)
+{
+    if (!m_initialized)
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE media_files "
+              "SET date_added = datetime('now', 'localtime') "
+              "WHERE id = :id");
+    q.bindValue(":id", id);
+
+    if (!q.exec())
+    {
+        qWarning() << "[DB] bumpToFront failed:" << q.lastError().text();
+        return false;
+    }
+    return true;
+}
+
 bool DatabaseManager::removeMediaFile(int id)
 {
     if (!m_initialized)
