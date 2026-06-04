@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QStringList>
 #include <QStyleFactory>
 #include <QPalette>
 #include <QColor>
@@ -110,6 +111,13 @@ int main(int argc, char* argv[])
     {
         MainWindow window;
         window.show();
+
+        // Windows passes the media path as argv[1] when the app is
+        // launched via a file association / "Open with" — play it.
+        const QStringList args = app.arguments();
+        if (args.size() > 1)
+            window.openExternalFile(args.at(1));
+
         return app.exec();
     }
     catch (const std::exception& ex)

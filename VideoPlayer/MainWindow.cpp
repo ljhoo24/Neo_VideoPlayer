@@ -2461,6 +2461,55 @@ void MainWindow::playItemAtRow(int row)
     QSettings().setValue("playback/lastPlayedId", m_currentItem->id);
 }
 
+// ------------------------------------------------------------
+// Play a file handed to us from the outside world (command line).
+//
+// Windows passes the media path as argv[1] when the user double-clicks an
+// associated file or picks us from "Open with". We register the file in
+// the DB (idempotent — duplicate paths are rejected by the UNIQUE
+// constraint) so it joins the playlist and gets next/prev navigation plus
+// its "<basename>_index.*" thumbnail, then play it through the normal
+// playlist path.
+// ------------------------------------------------------------
+void MainWindow::openExternalFile(const QString& path)
+{
+    const QString abs = QFileInfo(path).absoluteFilePath();
+    if (abs.isEmpty() || !QFileInfo::exists(abs))
+    {
+        qWarning() << "[OpenFile] file not found:" << path;
+        return;
+    }
+
+    qDebug() << "[OpenFile] external open request:" << abs;
+
+    if (m_db.isInitialized())
+    {
+        const QString indexSheet = findIndexSheetFor(abs);
+        (void)m_db.addMediaFile(abs, indexSheet);   // may already exist
+        refreshPlaylist();
+
+        if (const auto item = m_db.getMediaByPath(abs))
+        {
+            const int row = m_playlistModel->rowForId(item->id);
+            if (row >= 0)
+            {
+                const QModelIndex idx = m_playlistModel->index(row);
+                m_playlistView->setCurrentIndex(idx);
+                m_playlistView->scrollTo(idx,
+                    QAbstractItemView::PositionAtCenter);
+                playItemAtRow(row);
+                return;
+            }
+        }
+    }
+
+    // Fallback: DB unavailable, or the entry is hidden by an active search
+    // filter (rowForId == -1). Play the file directly without touching the
+    // playlist selection so the user still sees their video.
+    m_currentItem.reset();
+    m_mpvWidget->loadFile(abs);
+}
+
 int MainWindow::currentPlaylistRow() const
 {
     const QModelIndex idx = m_playlistView->currentIndex();
