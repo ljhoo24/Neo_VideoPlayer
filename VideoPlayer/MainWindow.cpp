@@ -2484,28 +2484,40 @@ void MainWindow::openExternalFile(const QString& path)
 
     if (m_db.isInitialized())
     {
-        const QString indexSheet = findIndexSheetFor(abs);
-        (void)m_db.addMediaFile(abs, indexSheet);   // may already exist
-        refreshPlaylist();
+        // Clear any persisted search / min-rating filter, otherwise the
+        // freshly-added entry could be hidden and we'd never be able to
+        // select it in the playlist. Setting the widgets drives the model
+        // (and persistence) through the normal signal path.
+        if (m_searchEdit && !m_searchEdit->text().isEmpty())
+            m_searchEdit->clear();
+        if (m_minRatingSpinBox && m_minRatingSpinBox->value() != 0)
+            m_minRatingSpinBox->setValue(0);
 
+        const QString indexSheet = findIndexSheetFor(abs);
+        (void)m_db.addMediaFile(abs, indexSheet);   // INSERT OR IGNORE
+
+        // Move the entry to the top of the list — for both a brand-new
+        // insert (already "now") and a re-watch of an existing file.
         if (const auto item = m_db.getMediaByPath(abs))
         {
+            (void)m_db.bumpToFront(item->id);
+            refreshPlaylist();
+
             const int row = m_playlistModel->rowForId(item->id);
             if (row >= 0)
             {
                 const QModelIndex idx = m_playlistModel->index(row);
                 m_playlistView->setCurrentIndex(idx);
                 m_playlistView->scrollTo(idx,
-                    QAbstractItemView::PositionAtCenter);
+                    QAbstractItemView::PositionAtTop);
                 playItemAtRow(row);
                 return;
             }
         }
     }
 
-    // Fallback: DB unavailable, or the entry is hidden by an active search
-    // filter (rowForId == -1). Play the file directly without touching the
-    // playlist selection so the user still sees their video.
+    // Fallback: DB unavailable, or the entry somehow couldn't be located.
+    // Play the file directly so the user still sees their video.
     m_currentItem.reset();
     m_mpvWidget->loadFile(abs);
 }

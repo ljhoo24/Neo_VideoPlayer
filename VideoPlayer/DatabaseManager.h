@@ -48,6 +48,11 @@ public:
     [[nodiscard]] bool updateThumbnail(int id, const QString& thumbnailPath);
     [[nodiscard]] bool removeMediaFile(int id);
 
+    // Bump an entry's date_added to "now" so it sorts to the front of the
+    // playlist (which is ordered by date_added DESC). Used when a file is
+    // opened from outside the app so the just-played video jumps to the top.
+    [[nodiscard]] bool bumpToFront(int id);
+
     // ---- Read operations ----
     [[nodiscard]] std::vector<MediaItem> getAllMedia()                          const;
     [[nodiscard]] std::vector<MediaItem> searchMedia(const QString& query)     const;

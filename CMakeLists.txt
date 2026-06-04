@@ -118,13 +118,19 @@ if(WIN32)
         NO_DEFAULT_PATH
     )
     if(MPV_DLL)
+        # The import library (mpv.lib) resolves to the DLL by its ORIGINAL
+        # name — for shinchiro dev builds that is "libmpv-2.dll". Copy it
+        # under that exact name so the Windows loader finds it next to the
+        # exe; renaming it (e.g. to mpv-2.dll) makes startup fail with
+        # 0xC0000135 unless an mpv DLL happens to be on PATH.
+        get_filename_component(MPV_DLL_NAME "${MPV_DLL}" NAME)
         add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${MPV_DLL}"
-                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/mpv-2.dll"
-            COMMENT "Copying mpv-2.dll…"
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>/${MPV_DLL_NAME}"
+            COMMENT "Copying ${MPV_DLL_NAME}…"
         )
-        message(STATUS "mpv DLL      : ${MPV_DLL}")
+        message(STATUS "mpv DLL      : ${MPV_DLL} -> ${MPV_DLL_NAME}")
     else()
         message(WARNING "mpv DLL not found in ${MPV_ROOT}/bin – "
                         "copy it manually next to the executable.")
@@ -135,9 +141,14 @@ if(WIN32)
         find_program(WINDEPLOYQT windeployqt
             HINTS "${Qt6_DIR}/../../../bin")
         if(WINDEPLOYQT)
+            # --compiler-runtime copies the MSVC runtime DLLs (vcruntime140*,
+            # msvcp140*, …) next to the exe so the build runs on machines that
+            # don't have the matching VC++ redistributable installed. Requires
+            # the VS dev-environment vars (build from a Developer prompt).
             add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
                 COMMAND "${WINDEPLOYQT}"
                         --no-translations
+                        --compiler-runtime
                         "$<TARGET_FILE:${PROJECT_NAME}>"
                 COMMENT "Running windeployqt…"
             )
