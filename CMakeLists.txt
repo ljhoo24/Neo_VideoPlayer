@@ -20,15 +20,15 @@ set(CMAKE_AUTOUIC ON)
 # ================================================================
 # Qt6 (falls back to Qt5 if Qt6 is not found)
 # ================================================================
-find_package(Qt6 QUIET COMPONENTS Widgets Sql)
+find_package(Qt6 QUIET COMPONENTS Widgets Sql Network)
 
 if(Qt6_FOUND)
     message(STATUS "VideoPlayer: using Qt ${Qt6_VERSION}")
-    set(QT_LIBS Qt6::Widgets Qt6::Sql)
+    set(QT_LIBS Qt6::Widgets Qt6::Sql Qt6::Network)
 else()
-    find_package(Qt5 REQUIRED COMPONENTS Widgets Sql)
+    find_package(Qt5 REQUIRED COMPONENTS Widgets Sql Network)
     message(STATUS "VideoPlayer: using Qt ${Qt5_VERSION} (Qt6 not found)")
-    set(QT_LIBS Qt5::Widgets Qt5::Sql)
+    set(QT_LIBS Qt5::Widgets Qt5::Sql Qt5::Network)
 endif()
 
 # ================================================================
