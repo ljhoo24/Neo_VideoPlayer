@@ -1386,6 +1386,22 @@ void MainWindow::setupConnections()
     connect(m_mpvWidget, &MpvPlayerWidget::fileEnded,
             this, &MainWindow::onFileEnded);
 
+    // ---- Mouse gestures over the video ----
+    // Wheel → volume. Drive the slider (not setVolume directly): the
+    // slider's valueChanged is already wired to mpv volume *and* the
+    // mute-button icon, so going through it keeps everything in sync.
+    // One notch = 5 volume units, clamped to the slider's 0..100 range.
+    connect(m_mpvWidget, &MpvPlayerWidget::wheelVolumeStep,
+            this, [this](int steps) {
+                m_volumeSlider->setValue(
+                    qBound(0, m_volumeSlider->value() + steps * 5, 100));
+            });
+
+    // Double-click → toggle fullscreen. onToggleFullscreen already
+    // handles both directions (enter when windowed, exit when full).
+    connect(m_mpvWidget, &MpvPlayerWidget::doubleClicked,
+            this, &MainWindow::onToggleFullscreen);
+
     // Apply initial volume to mpv once it's running
     m_mpvWidget->setVolume(m_volumeSlider->value());
 }

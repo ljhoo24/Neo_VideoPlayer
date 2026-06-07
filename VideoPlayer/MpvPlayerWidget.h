@@ -5,6 +5,8 @@
 // Forward-declare the opaque mpv C types to avoid polluting headers
 struct mpv_handle;
 struct mpv_event;
+class QWheelEvent;
+class QMouseEvent;
 
 // ============================================================
 // MpvPlayerWidget
@@ -93,6 +95,22 @@ signals:
     void fileLoaded(const QString& filePath);
     void fileEnded();
 
+    // ---- Mouse gestures over the video surface ----
+    // mpv embeds its renderer in a WS_DISABLED child window, so Windows
+    // routes mouse input to this parent widget; wheelEvent /
+    // mouseDoubleClickEvent emit these. MainWindow owns the resulting
+    // state (volume slider, fullscreen window mode) so the UI stays in
+    // sync — the widget itself stays stateless.
+    void wheelVolumeStep(int deltaSteps);   // positive = wheel up
+    void doubleClicked();
+
+protected:
+    // mpv embeds its renderer in a WS_DISABLED child HWND, so Windows
+    // routes mouse input over the video to THIS parent widget. We handle
+    // the gestures here and emit signals; MainWindow owns the state.
+    void wheelEvent(QWheelEvent* e) override;
+    void mouseDoubleClickEvent(QMouseEvent* e) override;
+
 private slots:
     // Dispatched from wakeupCallback via QMetaObject::invokeMethod
     void onMpvEvents();
@@ -108,6 +126,7 @@ private:
 
     void observeProperties();
     void applyUpscalingProfile();
+    void registerMouseBindings();
     void handleMpvEvent(mpv_event* event);
 
     // Static C-style callback required by the mpv C API

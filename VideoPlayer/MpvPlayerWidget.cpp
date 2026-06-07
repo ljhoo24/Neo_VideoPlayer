@@ -7,9 +7,12 @@
 #include <QCoreApplication>
 #include <QStandardPaths>
 #include <QRegularExpression>
+#include <QWheelEvent>
+#include <QMouseEvent>
 #include <QDebug>
 
 #include <algorithm>   // std::clamp
+#include <cstdlib>     // std::atoi
 #include <stdexcept>
 #include <string_view>
 
@@ -83,6 +86,7 @@ MpvPlayerWidget::MpvPlayerWidget(QWidget* parent)
 
     // Watch properties we need for the UI
     observeProperties();
+
 }
 
 MpvPlayerWidget::~MpvPlayerWidget()
@@ -167,6 +171,39 @@ void MpvPlayerWidget::togglePause()
 
     const char* args[] = { "cycle", "pause", nullptr };
     mpv_command(m_mpv, args);
+}
+
+// ============================================================
+// Mouse gestures over the video surface
+//
+// With "wid" embedding mpv's child HWND eats the raw mouse messages and
+// never forwards them to the Qt parent, so QWidget event overrides are
+// useless here. Instead we bind the gestures inside mpv's own input
+// system to `script-message` commands. mpv fires those back to every
+// client as MPV_EVENT_CLIENT_MESSAGE; handleMpvEvent() catches them and
+// emits the high-level signals below. MainWindow owns the actual volume
+// / fullscreen state, so it keeps the slider + window mode consistent.
+//
+// Binding the wheel to a script-message (rather than mpv's built-in
+// "add volume") deliberately overrides mpv's default wheel→volume/seek
+// bindings, keeping volume single-sourced through MainWindow's slider.
+// ============================================================
+
+void MpvPlayerWidget::wheelEvent(QWheelEvent* e)
+{
+    // mpv's render HWND is WS_DISABLED, so Windows forwards mouse input
+    // over the video to this parent widget. One notch = 120 units.
+    const int notches = e->angleDelta().y() / 120;
+    if (notches != 0)
+        emit wheelVolumeStep(notches);
+    e->accept();
+}
+
+void MpvPlayerWidget::mouseDoubleClickEvent(QMouseEvent* e)
+{
+    if (e->button() == Qt::LeftButton)
+        emit doubleClicked();
+    e->accept();
 }
 
 void MpvPlayerWidget::seek(double seconds)
