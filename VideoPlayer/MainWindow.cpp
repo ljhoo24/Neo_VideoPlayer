@@ -1402,6 +1402,11 @@ QWidget* MainWindow::buildControlsBar()
         proxy->setParent(m_seekSlider);
         m_seekSlider->setStyle(proxy);
     }
+    // Hover thumbnail preview: track bare mouse moves (no button held) and
+    // observe them via eventFilter. Tracking + the filter only OBSERVE — we
+    // return false so QSlider's own click/drag seek behaviour is untouched.
+    m_seekSlider->setMouseTracking(true);
+    m_seekSlider->installEventFilter(this);
     seekRow->addWidget(m_seekSlider, 1);
 
     vl->addLayout(seekRow);
@@ -3538,7 +3543,195 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
         }
         return true;
     }
+
+    // ── Seek-bar hover thumbnail preview ─────────────────────────────────
+    // Observe-only: we never consume MouseMove so QSlider keeps handling
+    // its own click/drag seek. Leave hides the popup.
+    if (obj == m_seekSlider)
+    {
+        if (event->type() == QEvent::MouseMove)
+        {
+            auto* me = static_cast<QMouseEvent*>(event);
+            showSeekPreviewAt(me->pos().x());
+            return false;   // do NOT interfere with seek handling
+        }
+        if (event->type() == QEvent::Leave)
+        {
+            if (m_seekPreview)
+                m_seekPreview->hide();
+            return false;
+        }
+    }
+
     return QMainWindow::eventFilter(obj, event);
+}
+
+// ============================================================
+// Seek-bar hover thumbnail preview
+// ============================================================
+
+// Lazily create the frameless top-level popup. Qt::ToolTip keeps it above
+// other windows and out of the taskbar; WA_TransparentForMouseEvents stops
+// it ever stealing hover/clicks from the slider beneath the cursor.
+void MainWindow::ensureSeekPreview()
+{
+    if (m_seekPreview)
+        return;
+
+    m_seekPreview = new QLabel(nullptr,
+                               Qt::ToolTip
+                                 | Qt::FramelessWindowHint
+                                 | Qt::WindowStaysOnTopHint);
+    m_seekPreview->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_seekPreview->setAttribute(Qt::WA_ShowWithoutActivating);
+    m_seekPreview->setAlignment(Qt::AlignCenter);
+}
+
+// (Re)load the index-sheet pixmap for the currently-playing item, but only
+// when the source path actually changed — so repeated mouse-moves are cheap.
+// Clears the cache when there's no playing item or no index sheet.
+void MainWindow::refreshSeekPreviewSheet()
+{
+    const QString path = m_playingItem.has_value()
+                             ? m_playingItem->thumbnailPath
+                             : QString();
+
+    if (path == m_seekPreviewSheetPath)
+        return;   // already cached (or already-empty)
+
+    m_seekPreviewSheetPath = path;
+    if (path.isEmpty())
+        m_seekPreviewSheet = QPixmap();
+    else
+        m_seekPreviewSheet = QPixmap(path);   // null if the file is missing
+}
+
+// Compose + position the popup for a hover at sliderX (local x within the
+// slider). Shows the time caption always; adds a cropped index-sheet cell
+// when a sheet exists.
+//
+// Index-sheet grid geometry — from reference/index_sheet.py:
+//   COLS = 4, ROWS = 3, FRAME_COUNT = 12 (cells time-ordered L→R, T→B).
+//   A header strip of HEADER_H = 96 px (at TARGET_WIDTH = 1920) sits above
+//   the grid; there are NO side or bottom margins and no inter-cell padding.
+//   cell_w = sheetW / COLS;  cell_h = (sheetH - header) / ROWS.
+// The sheet is saved at 1920px wide but may be displayed/stored scaled, so
+// we derive the header proportionally (96/1080-ish would be wrong) — the
+// script reserves a FIXED 96px header at 1920 width, i.e. header scales with
+// the sheet's actual width: header = sheetW * (96 / 1920).
+void MainWindow::showSeekPreviewAt(int sliderX)
+{
+    // Only when a file is actually loaded.
+    const double dur = m_mpvWidget ? m_mpvWidget->duration() : m_duration;
+    if (dur <= 0.0 || m_seekSlider->width() <= 0)
+    {
+        if (m_seekPreview)
+            m_seekPreview->hide();
+        return;
+    }
+
+    ensureSeekPreview();
+    refreshSeekPreviewSheet();
+
+    // fraction of the timeline under the cursor (clamped to the bar).
+    double frac = static_cast<double>(sliderX)
+                  / static_cast<double>(m_seekSlider->width());
+    frac = std::clamp(frac, 0.0, 1.0);
+
+    const double tSec = frac * dur;
+    const QString caption = formatTime(tSec);
+
+    // ── grid constants (reference/index_sheet.py) ──
+    constexpr int kCols       = 4;     // COLS
+    constexpr int kRows       = 3;     // ROWS
+    constexpr int kSheetRefW  = 1920;  // TARGET_WIDTH
+    constexpr int kHeaderRefH = 96;    // HEADER_H at TARGET_WIDTH
+
+    constexpr int kPreviewW = 160;     // popup image width (px)
+
+    // Build the image part (a cropped cell) when we have a usable sheet.
+    QPixmap cropped;
+    if (!m_seekPreviewSheet.isNull())
+    {
+        const int sheetW = m_seekPreviewSheet.width();
+        const int sheetH = m_seekPreviewSheet.height();
+
+        // Header scales with the sheet's actual width (the script reserves a
+        // fixed 96px header at a 1920px-wide canvas, so 96/1920 of the width).
+        const int header =
+            static_cast<int>(std::lround(
+                static_cast<double>(sheetH > 0 ? sheetW : 0)
+                * kHeaderRefH / kSheetRefW));
+
+        const int gridH = sheetH - header;
+        if (gridH > 0 && sheetW > 0)
+        {
+            const int cellCount = kCols * kRows;
+            int idx = static_cast<int>(std::floor(frac * cellCount));
+            idx = std::clamp(idx, 0, cellCount - 1);
+
+            const int col = idx % kCols;
+            const int row = idx / kCols;
+
+            const int cellW = sheetW / kCols;
+            const int cellH = gridH / kRows;
+
+            const QRect cell(col * cellW,
+                             header + row * cellH,
+                             cellW,
+                             cellH);
+            cropped = m_seekPreviewSheet.copy(cell)
+                          .scaledToWidth(kPreviewW,
+                                         Qt::SmoothTransformation);
+        }
+    }
+
+    // ── compose: optional frame on top, caption bar underneath ──
+    const QFont capFont = m_seekPreview->font();
+    const QFontMetrics fm(capFont);
+    const int capH = fm.height() + 8;          // caption bar height
+    const int imgH = cropped.isNull() ? 0 : cropped.height();
+    const int imgW = cropped.isNull() ? 0 : cropped.width();
+
+    const int compW = std::max(kPreviewW, imgW);
+    const int compH = imgH + capH;
+
+    QPixmap composed(compW, compH);
+    composed.fill(QColor(20, 20, 20));
+
+    QPainter p(&composed);
+    if (!cropped.isNull())
+        p.drawPixmap((compW - imgW) / 2, 0, cropped);
+
+    // caption bar background + centred MM:SS text
+    p.fillRect(QRect(0, imgH, compW, capH), QColor(0, 0, 0, 200));
+    p.setPen(QColor(240, 240, 240));
+    p.setFont(capFont);
+    p.drawText(QRect(0, imgH, compW, capH),
+               Qt::AlignCenter, caption);
+    p.end();
+
+    m_seekPreview->setFixedSize(compW, compH);
+    m_seekPreview->setPixmap(composed);
+
+    // ── position in GLOBAL coords: centred on the cursor x, just above the
+    // slider, clamped to the screen the slider sits on. ──
+    const QPoint globalSliderTopLeft =
+        m_seekSlider->mapToGlobal(QPoint(0, 0));
+    int gx = globalSliderTopLeft.x() + sliderX - compW / 2;
+    int gy = globalSliderTopLeft.y() - compH - 8;   // 8px gap above the bar
+
+    if (QScreen* scr = m_seekSlider->screen())
+    {
+        const QRect avail = scr->availableGeometry();
+        gx = std::clamp(gx, avail.left(), avail.right() - compW + 1);
+        if (gy < avail.top())
+            gy = avail.top();
+    }
+
+    m_seekPreview->move(gx, gy);
+    m_seekPreview->show();
+    m_seekPreview->raise();
 }
 
 // ============================================================
@@ -3705,6 +3898,10 @@ void MainWindow::playItemAtRow(int row)
 
     // Keep the fullscreen title OSD current with the new playing item.
     updateFsTitle();
+
+    // Refresh the cached index-sheet for the hover preview so the next hover
+    // crops from THIS video's sheet rather than the previous one.
+    refreshSeekPreviewSheet();
 }
 
 // ------------------------------------------------------------

@@ -2,6 +2,8 @@
 
 #include <QMainWindow>
 #include <QList>
+#include <QPixmap>   // m_seekPreviewSheet is held by value
+#include <QString>
 #include <optional>
 #include "DatabaseManager.h"
 #include "PlaylistModel.h"
@@ -281,6 +283,25 @@ private:
     // to A whenever the position runs past B (or jumps before A).
     std::optional<double>    m_pointA;
     std::optional<double>    m_pointB;
+
+    // ---- Seek-bar hover thumbnail preview ----
+    // Frameless top-level popup shown above the seek slider while the mouse
+    // hovers it: a cropped cell from the current video's index sheet plus a
+    // MM:SS caption. m_seekPreviewSheet caches the loaded index-sheet pixmap
+    // (keyed by m_seekPreviewSheetPath) so we don't re-read it from disk on
+    // every mouse-move; it's refreshed when playback starts (playItemAtRow)
+    // or whenever the playing item's thumbnailPath changes. The preview is
+    // hover-only and never interferes with click/drag seeking.
+    QLabel*  m_seekPreview{nullptr};
+    QPixmap  m_seekPreviewSheet;
+    QString  m_seekPreviewSheetPath;
+
+    // Build the popup lazily and refresh the cached index sheet for the
+    // currently-playing item. Safe to call repeatedly.
+    void     ensureSeekPreview();
+    void     refreshSeekPreviewSheet();
+    // Update + show the popup for a hovered slider x (local to the slider).
+    void     showSeekPreviewAt(int sliderX);
 
     // ---- Setup helpers ----
     void     setupDatabase();
