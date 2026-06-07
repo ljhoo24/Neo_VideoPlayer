@@ -1,8 +1,18 @@
 #include "PlaylistModel.h"
 
 #include <QDebug>
+#include <QPainter>
+#include <QFileInfo>
 #include <algorithm>
 #include <ranges>
+
+namespace
+{
+// Grid thumbnail size — matches MainWindow's QListView iconSize so the
+// pixmap is rendered 1:1 without further scaling by the view.
+constexpr int kThumbW = 160;
+constexpr int kThumbH = 90;
+}
 
 // ============================================================
 // Constructor
@@ -36,6 +46,12 @@ QVariant PlaylistModel::data(const QModelIndex& index, int role) const
     {
     case Qt::DisplayRole:
         return item.title;
+
+    case Qt::DecorationRole:
+        // Used by the grid (IconMode) view. In list mode the icon is
+        // simply not painted (no iconSize set), so returning it always
+        // is harmless and keeps both modes backed by the same model.
+        return thumbnailFor(item);
 
     case Qt::ToolTipRole:
         return item.filePath;
@@ -82,6 +98,9 @@ QHash<int, QByteArray> PlaylistModel::roleNames() const
 void PlaylistModel::loadFromDatabase(DatabaseManager& db)
 {
     beginResetModel();
+    // Thumbnail paths may have changed (re-scan / regenerated sheets), so
+    // drop the cache and let it refill lazily on the next paint.
+    m_thumbCache.clear();
     m_allItems = db.getAllMedia();
     qDebug() << "[Model] loadFromDatabase: received" << m_allItems.size() << "item(s) from DB";
     applyFilter();
@@ -172,4 +191,67 @@ void PlaylistModel::applyFilter()
         if (hasRating && item.rating < m_minRating)             continue;
         m_filteredItems.push_back(item);
     }
+}
+
+// ============================================================
+// Thumbnail builder (Qt::DecorationRole) — lazy + cached.
+//
+// Keyed by thumbnailPath so the same scaled pixmap is reused for every
+// repaint (and across items that happen to share a sheet). The empty
+// path maps to a single shared placeholder so missing-thumbnail cells
+// still render a tidy box instead of a broken/blank icon.
+// ============================================================
+
+QPixmap PlaylistModel::thumbnailFor(const MediaItem& item) const
+{
+    const QString key = item.thumbnailPath;
+
+    if (auto it = m_thumbCache.constFind(key); it != m_thumbCache.constEnd())
+        return it.value();
+
+    QPixmap result;
+
+    if (!key.isEmpty() && QFileInfo::exists(key))
+    {
+        QPixmap src(key);
+        if (!src.isNull())
+            result = src.scaled(kThumbW, kThumbH,
+                                 Qt::KeepAspectRatio,
+                                 Qt::SmoothTransformation);
+    }
+
+    // Fall back to a generated placeholder: a dark rounded rect with a
+    // theme-ish border and a simple ▶ glyph, so empty/broken thumbnails
+    // don't leave grid cells blank.
+    if (result.isNull())
+    {
+        QPixmap ph(kThumbW, kThumbH);
+        ph.fill(Qt::transparent);
+
+        QPainter p(&ph);
+        p.setRenderHint(QPainter::Antialiasing, true);
+
+        const QRectF box(0.5, 0.5, kThumbW - 1.0, kThumbH - 1.0);
+        p.setBrush(QColor(0x26, 0x2a, 0x30));        // dark fill
+        p.setPen(QPen(QColor(0x3a, 0x3f, 0x47), 1)); // theme-ish border
+        p.drawRoundedRect(box, 6, 6);
+
+        // Centered play triangle.
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0x6a, 0x70, 0x7a));
+        const double cx = kThumbW / 2.0;
+        const double cy = kThumbH / 2.0;
+        const QPointF tri[3] = {
+            { cx - 9, cy - 11 },
+            { cx - 9, cy + 11 },
+            { cx + 13, cy      },
+        };
+        p.drawPolygon(tri, 3);
+        p.end();
+
+        result = ph;
+    }
+
+    m_thumbCache.insert(key, result);
+    return result;
 }

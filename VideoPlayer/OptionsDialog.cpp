@@ -12,6 +12,7 @@
 #include <QPushButton>
 #include <QSlider>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QDialogButtonBox>
@@ -226,9 +227,39 @@ void OptionsDialog::buildGeneralTab()
     playForm->addWidget(m_resumeCheck);
 
     vl->addWidget(playGroup);
+
+    // ---- 재생목록 그룹 ----
+    auto* listGroup = new QGroupBox("재생목록", page);
+    auto* listForm  = new QFormLayout(listGroup);
+    listForm->setContentsMargins(10, 12, 10, 12);
+    listForm->setSpacing(8);
+
+    // 표시 방식 — 리스트(제목만) vs 썸네일 그리드. Index 0 = 리스트,
+    // index 1 = 그리드, mirrored into m_playlistGridMode so onAccepted /
+    // the caller can read it back without re-querying the combo.
+    m_playlistViewCombo = new QComboBox(listGroup);
+    m_playlistViewCombo->addItem("리스트");   // index 0 → grid = false
+    m_playlistViewCombo->addItem("그리드");   // index 1 → grid = true
+    m_playlistViewCombo->setToolTip(
+        "재생목록을 제목만 나열하는 리스트, 또는 썸네일을 보여주는\n"
+        "그리드 형태로 표시합니다. OK 누르면 즉시 반영됩니다.");
+    m_playlistViewCombo->setCurrentIndex(m_playlistGridMode ? 1 : 0);
+    connect(m_playlistViewCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int idx) { m_playlistGridMode = (idx == 1); });
+    listForm->addRow("표시 방식", m_playlistViewCombo);
+
+    vl->addWidget(listGroup);
     vl->addStretch(1);
 
     m_tabs->addTab(page, "일반");
+}
+
+void OptionsDialog::setPlaylistGridMode(bool grid)
+{
+    m_playlistGridMode = grid;
+    if (m_playlistViewCombo)
+        m_playlistViewCombo->setCurrentIndex(grid ? 1 : 0);
 }
 
 void OptionsDialog::setNisSharpness(double value)

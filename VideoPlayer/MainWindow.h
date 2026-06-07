@@ -226,6 +226,15 @@ private:
     void     loadShortcuts();
     void     saveShortcuts();
     QWidget* buildLeftPanel();
+
+    // ---- Playlist view mode (list vs. thumbnail grid) ----
+    // m_playlistGridMode mirrors the persisted "ui/playlistView" choice;
+    // applyPlaylistViewMode reconfigures m_playlistView in place so the
+    // toggle applies live without a restart and without disturbing
+    // selection / double-click / drag-drop wiring.
+    bool m_playlistGridMode{false};
+    void applyPlaylistViewMode(bool grid);
+
     QWidget* buildRightPanel();
     QWidget* buildControlsBar();
     void     updateRepeatButton();

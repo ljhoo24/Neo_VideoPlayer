@@ -11,6 +11,7 @@ class QTabWidget;
 class QSlider;
 class QLabel;
 class QCheckBox;
+class QComboBox;
 
 // ============================================================
 // OptionsDialog
@@ -52,6 +53,11 @@ public:
     void setResumeEnabled(bool enabled);
     bool resumeEnabled() const noexcept { return m_resumeEnabled; }
 
+    // 재생목록 표시 방식 — false = 리스트, true = 썸네일 그리드. Caller seeds
+    // the current mode before exec() and reads it back after Accepted.
+    void setPlaylistGridMode(bool grid);
+    bool playlistGridMode() const noexcept { return m_playlistGridMode; }
+
 private slots:
     void onAccepted();
     void onResetDefaults();
@@ -69,6 +75,9 @@ private:
 
     QCheckBox* m_resumeCheck{nullptr};
     bool       m_resumeEnabled{true};   // default: enabled
+
+    QComboBox* m_playlistViewCombo{nullptr};
+    bool       m_playlistGridMode{false};   // default: 리스트
 
     void buildShortcutTab();
     void buildGeneralTab();

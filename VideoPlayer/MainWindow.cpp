@@ -835,6 +835,12 @@ MainWindow::MainWindow(QWidget* parent)
     setMinimumSize(980, 620);
     resize(1280, 720);
 
+    // Load the playlist view mode before setupUI() — buildLeftPanel()
+    // reads m_playlistGridMode to configure the QListView on creation.
+    // Stored as "list"/"grid" text; default is the classic list.
+    m_playlistGridMode =
+        (QSettings().value("ui/playlistView", "list").toString() == "grid");
+
     setupDatabase();
     setupUI();          // UI first — m_mpvWidget must exist before createActions
     createActions();    // build QActions (and default shortcuts)
@@ -1123,6 +1129,11 @@ QWidget* MainWindow::buildLeftPanel()
     m_playlistView->installEventFilter(this);
     layout->addWidget(m_playlistView, 1);   // stretch factor 1
 
+    // Apply the persisted view mode (list vs. thumbnail grid) now that
+    // both the model and view exist. Selection / double-click / drag-drop
+    // are wired later in setupConnections and stay valid in either mode.
+    applyPlaylistViewMode(m_playlistGridMode);
+
     // ---- Index-sheet (thumbnail) preview ----
     auto* thumbGroup  = new QGroupBox("인덱스 시트");
     auto* thumbLayout = new QVBoxLayout(thumbGroup);
@@ -1196,6 +1207,52 @@ QWidget* MainWindow::buildLeftPanel()
     layout->addWidget(metaGroup);
 
     return panel;
+}
+
+// ----------------------------------------
+// Playlist view mode (list vs. thumbnail grid)
+// ----------------------------------------
+//
+// Reconfigures the existing m_playlistView in place. We deliberately do
+// NOT touch the model, selection model, drag-drop flags or event filter
+// here — only presentation — so double-click-to-play and the index-sheet
+// drag/drop keep working in both modes.
+//
+// GRID uses Static movement + Adjust resize so the user can't drag-
+// reorder items and the cells reflow when the panel is resized.
+void MainWindow::applyPlaylistViewMode(bool grid)
+{
+    if (!m_playlistView)
+        return;
+
+    m_playlistGridMode = grid;
+
+    if (grid)
+    {
+        m_playlistView->setViewMode(QListView::IconMode);
+        m_playlistView->setIconSize(QSize(160, 90));
+        m_playlistView->setGridSize(QSize(184, 140));
+        m_playlistView->setResizeMode(QListView::Adjust);
+        m_playlistView->setMovement(QListView::Static);
+        m_playlistView->setFlow(QListView::LeftToRight);
+        m_playlistView->setWrapping(true);
+        m_playlistView->setWordWrap(true);
+        m_playlistView->setSpacing(8);
+        m_playlistView->setUniformItemSizes(true);
+    }
+    else
+    {
+        m_playlistView->setViewMode(QListView::ListMode);
+        m_playlistView->setIconSize(QSize());   // no icon column in list mode
+        m_playlistView->setGridSize(QSize());
+        m_playlistView->setResizeMode(QListView::Fixed);
+        m_playlistView->setMovement(QListView::Static);
+        m_playlistView->setFlow(QListView::TopToBottom);
+        m_playlistView->setWrapping(false);
+        m_playlistView->setWordWrap(false);
+        m_playlistView->setSpacing(2);
+        m_playlistView->setUniformItemSizes(true);
+    }
 }
 
 // ----------------------------------------
@@ -2082,6 +2139,9 @@ void MainWindow::onOptionsTriggered()
     // Seed the "이어보기" checkbox from the current option state.
     dlg.setResumeEnabled(m_resumeEnabled);
 
+    // Seed the playlist view-mode combo from the current mode.
+    dlg.setPlaylistGridMode(m_playlistGridMode);
+
     if (dlg.exec() == QDialog::Accepted)
     {
         // Dialog has already applied the new shortcuts to the QActions.
@@ -2099,6 +2159,12 @@ void MainWindow::onOptionsTriggered()
         // "이어보기" option — apply to live state and persist.
         m_resumeEnabled = dlg.resumeEnabled();
         QSettings().setValue("playback/resumeEnabled", m_resumeEnabled);
+
+        // Playlist view mode — persist as "list"/"grid" and apply live so
+        // the change takes effect without a restart.
+        const bool grid = dlg.playlistGridMode();
+        QSettings().setValue("ui/playlistView", grid ? "grid" : "list");
+        applyPlaylistViewMode(grid);
 
         statusBar()->showMessage("옵션이 저장되었습니다", 4000);
     }

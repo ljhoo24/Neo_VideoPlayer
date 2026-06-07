@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QHash>
+#include <QPixmap>
 #include <vector>
 #include <optional>
 #include "DatabaseManager.h"
@@ -53,6 +55,16 @@ private:
     std::vector<MediaItem> m_filteredItems;
     QString                m_filterQuery;
     int                    m_minRating{0};
+
+    // Thumbnail cache for the grid (Qt::DecorationRole). Scaling an
+    // image from disk on every repaint would stutter the view, so we
+    // cache the scaled QPixmap keyed by thumbnailPath. Empty key holds
+    // the shared placeholder. mutable: filled lazily inside const data().
+    mutable QHash<QString, QPixmap> m_thumbCache;
+
+    // Build (and cache) the scaled thumbnail for an item, or a generated
+    // placeholder when the path is empty / unreadable.
+    [[nodiscard]] QPixmap thumbnailFor(const MediaItem& item) const;
 
     void applyFilter();
 };
