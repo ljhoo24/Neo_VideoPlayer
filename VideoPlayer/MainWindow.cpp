@@ -956,9 +956,15 @@ MainWindow::MainWindow(QWidget* parent)
 
     m_fsHideTimer = new QTimer(this);
     m_fsHideTimer->setSingleShot(true);
-    m_fsHideTimer->setInterval(700);
+    m_fsHideTimer->setInterval(2500);   // hide a couple seconds after the mouse settles
     connect(m_fsHideTimer, &QTimer::timeout, this, [this] {
-        if (isFullScreen()) m_controlsBar->hide();
+        // Title OSD and controls overlay share one auto-hide lifecycle —
+        // hide them together.
+        if (isFullScreen())
+        {
+            m_controlsBar->hide();
+            if (m_fsTitleLabel) m_fsTitleLabel->hide();
+        }
     });
 }
 
@@ -1039,6 +1045,26 @@ void MainWindow::setupUI()
     splitter->setChildrenCollapsible(false);
 
     root->addWidget(splitter);
+
+    // ---- Fullscreen title OSD ----
+    // Parented directly to the MainWindow (the top-level window), NOT to the
+    // right panel — this mirrors exactly how m_controlsBar is made to float
+    // above the mpv surface in fullscreen. The video lives in an embedded
+    // native (WS_DISABLED) mpv child HWND that sits inside the right panel; a
+    // plain Qt child of that panel would be occluded by the native window.
+    // m_controlsBar dodges this by reparenting to `this` and calling raise()
+    // when fullscreen starts (see onToggleFullscreen). We give the title the
+    // SAME treatment from the outset: it's a non-native sibling of the mpv
+    // HWND's ancestors, lives on the top-level window's surface, and raise()
+    // keeps it painted above the video. Hidden until fullscreen.
+    m_fsTitleLabel = new QLabel(this);
+    m_fsTitleLabel->setObjectName("FsTitleOsd");
+    m_fsTitleLabel->setStyleSheet(
+        "background: rgba(0,0,0,160); color: #fff; font-size: 18px;"
+        " padding: 8px 14px; border-radius: 8px;");
+    m_fsTitleLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_fsTitleLabel->setFocusPolicy(Qt::NoFocus);
+    m_fsTitleLabel->hide();
 }
 
 // ----------------------------------------
@@ -2491,10 +2517,16 @@ void MainWindow::onToggleFullscreen()
         m_controlsBar->hide();
     }
 
+    // Refresh the OSD title text and keep it hidden initially — it appears
+    // together with the controls bar on the first mouse move (see eventFilter).
+    updateFsTitle();
+    if (m_fsTitleLabel) m_fsTitleLabel->hide();
+
     showFullScreen();
 
-    // Position the floating bar now that the window has full-screen geometry.
+    // Position the floating overlays now that the window has full-screen geometry.
     positionFsControlsBar();
+    positionFsTitle();
 
     // Intercept all mouse-move events to implement auto-show/hide.
     qApp->installEventFilter(this);
@@ -2507,6 +2539,9 @@ void MainWindow::onExitFullscreen()
 
     qApp->removeEventFilter(this);
     m_fsHideTimer->stop();
+
+    // Title OSD is fullscreen-only — hide it as we leave.
+    if (m_fsTitleLabel) m_fsTitleLabel->hide();
 
     // Re-attach controls bar to the right panel layout.
     if (m_controlsBar && m_rightPanel)
@@ -3083,28 +3118,30 @@ void MainWindow::onAutoThumbnail()
 
 bool MainWindow::eventFilter(QObject* obj, QEvent* event)
 {
-    // Fullscreen controls auto-show/hide based on mouse proximity to bottom edge.
+    // Fullscreen OSD auto-show/hide: any mouse movement reveals BOTH the
+    // bottom controls overlay and the top title overlay; the single-shot
+    // m_fsHideTimer hides them together after a short idle period.
     if (isFullScreen() && event->type() == QEvent::MouseMove)
     {
-        auto* me       = static_cast<QMouseEvent*>(event);
-        QPoint localPt = mapFromGlobal(me->globalPosition().toPoint());
+        // Show on movement.
+        if (!m_controlsBar->isVisible())
+        {
+            positionFsControlsBar();
+            m_controlsBar->show();
+            // raise() keeps the overlay painted above the native mpv HWND —
+            // same trick the controls bar has always relied on.
+            m_controlsBar->raise();
+        }
+        if (m_fsTitleLabel && !m_fsTitleLabel->isVisible())
+        {
+            updateFsTitle();        // also re-positions while fullscreen
+            m_fsTitleLabel->show();
+            m_fsTitleLabel->raise();
+        }
 
-        // Trigger zone: bottom 120 px of the window.
-        if (localPt.y() >= height() - 120)
-        {
-            m_fsHideTimer->stop();
-            if (!m_controlsBar->isVisible())
-            {
-                positionFsControlsBar();
-                m_controlsBar->show();
-                m_controlsBar->raise();
-            }
-        }
-        else
-        {
-            if (m_controlsBar->isVisible() && !m_fsHideTimer->isActive())
-                m_fsHideTimer->start();
-        }
+        // Restart the idle countdown on every move so the OSD stays up
+        // while the mouse is active and hides once it settles.
+        m_fsHideTimer->start();
         // Do not consume — let the event reach its target.
     }
 
@@ -3352,6 +3389,9 @@ void MainWindow::playItemAtRow(int row)
     // re-orders and filter changes) rather than the row index. Written
     // on every actual playback start — double-click, next/prev, repeat.
     QSettings().setValue("playback/lastPlayedId", m_currentItem->id);
+
+    // Keep the fullscreen title OSD current with the new playing item.
+    updateFsTitle();
 }
 
 // ------------------------------------------------------------
@@ -3472,11 +3512,47 @@ void MainWindow::positionFsControlsBar()
     m_controlsBar->setGeometry(0, height() - h - 20, width(), h);
 }
 
+// Top-center OSD title, mirroring positionFsControlsBar(). The label sizes to
+// its text (sizeHint) and is clamped so a very long title can't overflow the
+// window width.
+void MainWindow::positionFsTitle()
+{
+    if (!m_fsTitleLabel) return;
+    QSize sh = m_fsTitleLabel->sizeHint();
+    int w = qMin(sh.width(), width() - 40);
+    int x = (width() - w) / 2;
+    m_fsTitleLabel->setGeometry(x, 20, w, sh.height());
+}
+
+// Pick the best available title for the OSD: the playing item, else the
+// selected item, else the bare file name of whatever is playing.
+void MainWindow::updateFsTitle()
+{
+    if (!m_fsTitleLabel) return;
+
+    QString text;
+    if (m_playingItem.has_value() && !m_playingItem->title.isEmpty())
+        text = m_playingItem->title;
+    else if (m_currentItem.has_value() && !m_currentItem->title.isEmpty())
+        text = m_currentItem->title;
+    else if (m_playingItem.has_value())
+        text = QFileInfo(m_playingItem->filePath).fileName();
+    else if (m_currentItem.has_value())
+        text = QFileInfo(m_currentItem->filePath).fileName();
+
+    m_fsTitleLabel->setText(text);
+    if (isFullScreen())
+        positionFsTitle();
+}
+
 void MainWindow::resizeEvent(QResizeEvent* e)
 {
     QMainWindow::resizeEvent(e);
     if (isFullScreen())
+    {
         positionFsControlsBar();
+        positionFsTitle();
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent* e)

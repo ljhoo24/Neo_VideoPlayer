@@ -130,6 +130,7 @@ private:
     QWidget*         m_leftPanel{nullptr};
     QWidget*         m_rightPanel{nullptr};
     QWidget*         m_controlsBar{nullptr};
+    QLabel*          m_fsTitleLabel{nullptr};  // top OSD title overlay (fullscreen only)
     QByteArray       m_savedGeometry;   // geometry snapshot before entering fullscreen
     QTimer*          m_fsHideTimer{nullptr};  // auto-hide controls overlay in fullscreen
 
@@ -314,6 +315,13 @@ private:
     [[nodiscard]] int     currentPlayingRow() const;
     [[nodiscard]] QString formatTime(double seconds) const;
     void positionFsControlsBar();
+    // Position the fullscreen title OSD at top-center of the video area,
+    // mirroring positionFsControlsBar(). Called from the same places.
+    void positionFsTitle();
+    // Refresh m_fsTitleLabel's text from the currently-playing item
+    // (m_playingItem → m_currentItem → file name). Called on playback start
+    // and when entering fullscreen so the OSD is always current.
+    void updateFsTitle();
 
     // Qt event filter for double-click on thumbnail label
     bool eventFilter(QObject* obj, QEvent* event) override;
