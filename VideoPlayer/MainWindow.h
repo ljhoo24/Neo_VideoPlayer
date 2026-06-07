@@ -17,6 +17,8 @@ class QTextEdit;
 class QSlider;
 class QComboBox;
 class QSplitter;
+class QListWidget;
+class QListWidgetItem;
 class QModelIndex;
 class QAction;
 class QActionGroup;
@@ -61,6 +63,11 @@ private slots:
 
     // ---- Metadata ----
     void onSaveMetadata();
+
+    // ---- Bookmarks (per-video timestamp markers) ----
+    void onAddBookmark();                              // Ctrl+B / button
+    void onBookmarkActivated(QListWidgetItem* item);   // double-click → jump
+    void onRemoveBookmark();                           // 삭제 button / context menu
 
     // ---- Playback navigation ----
     void onPlayPrevious();
@@ -156,6 +163,10 @@ private:
     QSpinBox*        m_ratingSpinBox{nullptr};
     QTextEdit*   m_memoEdit{nullptr};
     QPushButton* m_saveButton{nullptr};
+    // ---- Bookmarks ----
+    QListWidget* m_bookmarkList{nullptr};
+    QPushButton* m_addBookmarkButton{nullptr};
+    QPushButton* m_removeBookmarkButton{nullptr};
     QPushButton* m_importThumbButton{nullptr};
     QPushButton* m_autoThumbButton{nullptr};
     // Search-row icon buttons — kept as members so refreshIcons() can
@@ -199,6 +210,7 @@ private:
     QAction* m_actAddFolder{nullptr};
     QAction* m_actRemoveSelected{nullptr};
     QAction* m_actSaveMeta{nullptr};
+    QAction* m_actAddBookmark{nullptr};
     QAction* m_actScreenshot{nullptr};
     QAction* m_actToggleRepeat{nullptr};
     QAction* m_actSpeedUp{nullptr};
@@ -313,6 +325,14 @@ private:
     // overwritten by a new selection or the window closes. No-op when clean.
     void flushPendingMetaEdits();
     void updateThumbnailDisplay(const QString& path);
+
+    // ---- Bookmarks ----
+    // Reload the bookmark list for the currently SELECTED item
+    // (m_currentItem). No-op (clears the list) when nothing is selected.
+    // Each row stores its bookmark id in Qt::UserRole and its position in
+    // Qt::UserRole+1 so the jump/delete handlers can read them back.
+    void refreshBookmarks();
+
     void refreshPlaylist();
     void playItemAtRow(int row);
 

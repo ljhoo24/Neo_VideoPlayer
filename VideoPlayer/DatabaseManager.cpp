@@ -76,9 +76,35 @@ bool DatabaseManager::createTables()
     )SQL");
 
     if (!ok)
+    {
         qWarning() << "[DB] createTables failed:" << q.lastError().text();
+        return ok;
+    }
 
-    return ok;
+    // ---- Bookmarks (per-video timestamp markers) ----
+    // Brand-new table, so CREATE TABLE IF NOT EXISTS needs no migration.
+    const bool bmOk = q.exec(R"SQL(
+        CREATE TABLE IF NOT EXISTS bookmarks (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            media_id  INTEGER NOT NULL,
+            position  REAL    NOT NULL,
+            note      TEXT    NOT NULL DEFAULT '',
+            created   TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+        )
+    )SQL");
+
+    if (!bmOk)
+    {
+        qWarning() << "[DB] createTables (bookmarks) failed:"
+                   << q.lastError().text();
+        return bmOk;
+    }
+
+    // Lookups are always "all bookmarks for one media row" — index media_id.
+    q.exec("CREATE INDEX IF NOT EXISTS idx_bookmarks_media "
+           "ON bookmarks(media_id)");
+
+    return true;
 }
 
 void DatabaseManager::migrateSchema()
@@ -258,6 +284,17 @@ bool DatabaseManager::removeMediaFile(int id)
     if (!m_initialized)
         return false;
 
+    // Delete the row's bookmarks first so they don't orphan (there is no
+    // ON DELETE CASCADE / foreign-key enforcement on this connection).
+    {
+        QSqlQuery bm(m_db);
+        bm.prepare("DELETE FROM bookmarks WHERE media_id = :id");
+        bm.bindValue(":id", id);
+        if (!bm.exec())
+            qWarning() << "[DB] removeMediaFile: delete bookmarks failed:"
+                       << bm.lastError().text();
+    }
+
     QSqlQuery q(m_db);
     q.prepare("DELETE FROM media_files WHERE id = :id");
     q.bindValue(":id", id);
@@ -268,6 +305,99 @@ bool DatabaseManager::removeMediaFile(int id)
         return false;
     }
     return true;
+}
+
+// ============================================================
+// Bookmarks
+// ============================================================
+
+int DatabaseManager::addBookmark(int mediaId, double position,
+                                 const QString& note)
+{
+    if (!m_initialized)
+        return -1;
+
+    QSqlQuery q(m_db);
+    q.prepare(R"SQL(
+        INSERT INTO bookmarks (media_id, position, note)
+        VALUES (:media, :pos, :note)
+    )SQL");
+    q.bindValue(":media", mediaId);
+    q.bindValue(":pos",   position);
+    // Avoid binding SQL NULL into a NOT NULL column on a null QString.
+    q.bindValue(":note",  note.isNull() ? QStringLiteral("") : note);
+
+    if (!q.exec())
+    {
+        qWarning() << "[DB] addBookmark failed:" << q.lastError().text();
+        return -1;
+    }
+    return q.lastInsertId().toInt();
+}
+
+bool DatabaseManager::updateBookmarkNote(int id, const QString& note)
+{
+    if (!m_initialized)
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE bookmarks SET note = :note WHERE id = :id");
+    q.bindValue(":note", note.isNull() ? QStringLiteral("") : note);
+    q.bindValue(":id",   id);
+
+    if (!q.exec())
+    {
+        qWarning() << "[DB] updateBookmarkNote failed:" << q.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+bool DatabaseManager::removeBookmark(int id)
+{
+    if (!m_initialized)
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare("DELETE FROM bookmarks WHERE id = :id");
+    q.bindValue(":id", id);
+
+    if (!q.exec())
+    {
+        qWarning() << "[DB] removeBookmark failed:" << q.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+std::vector<Bookmark> DatabaseManager::getBookmarks(int mediaId) const
+{
+    if (!m_initialized)
+        return {};
+
+    QSqlQuery q(m_db);
+    q.prepare("SELECT id, media_id, position, note, created "
+              "FROM bookmarks WHERE media_id = :id ORDER BY position ASC");
+    q.bindValue(":id", mediaId);
+
+    if (!q.exec())
+    {
+        qWarning() << "[DB] getBookmarks failed:" << q.lastError().text();
+        return {};
+    }
+
+    std::vector<Bookmark> items;
+    while (q.next())
+    {
+        items.push_back(Bookmark{
+            .id       = q.value("id").toInt(),
+            .mediaId  = q.value("media_id").toInt(),
+            .position = q.value("position").toDouble(),
+            .note     = q.value("note").toString(),
+            .created  = q.value("created").toString(),
+        });
+    }
+    return items;
 }
 
 // ============================================================

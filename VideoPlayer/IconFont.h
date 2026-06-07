@@ -42,6 +42,8 @@ inline constexpr char16_t Speed        = 0xe9e4;   // speedometer (speed control
 inline constexpr char16_t Flag         = 0xe153;   // A-B marker
 inline constexpr char16_t NavigateNext = 0xe408;   // frame step forward
 inline constexpr char16_t NavigateBefore = 0xe409; // frame step backward
+inline constexpr char16_t Bookmark    = 0xe866;   // bookmark (list/delete)
+inline constexpr char16_t BookmarkAdd = 0xe598;   // add bookmark at current pos
 
 // Load the embedded font once at startup. Returns the resolved family
 // name (empty on failure). Safe to call multiple times.

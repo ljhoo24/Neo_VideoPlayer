@@ -22,6 +22,19 @@ struct MediaItem
 };
 
 // ============================================================
+// Bookmark — a saved timestamp (with an optional note) within one
+// media file. Many bookmarks belong to one media row (media_id).
+// ============================================================
+struct Bookmark
+{
+    int     id{0};
+    int     mediaId{0};
+    double  position{0.0};   // playback position in seconds
+    QString note;            // optional free-text note (may be empty)
+    QString created;         // datetime('now','localtime') string
+};
+
+// ============================================================
 // DatabaseManager
 //   Wraps all SQLite operations via Qt's QSQLITE driver.
 //   Each instance owns an independent DB connection.
@@ -50,6 +63,13 @@ public:
     [[nodiscard]] bool updateThumbnail(int id, const QString& thumbnailPath);
     [[nodiscard]] bool removeMediaFile(int id);
 
+    // ---- Bookmarks (per-video timestamp markers) ----
+    // addBookmark returns the new row id, or -1 on failure.
+    [[nodiscard]] int  addBookmark(int mediaId, double position,
+                                   const QString& note);
+    [[nodiscard]] bool updateBookmarkNote(int id, const QString& note);
+    [[nodiscard]] bool removeBookmark(int id);
+
     // Bump an entry's date_added to "now" so it sorts to the front of the
     // playlist (which is ordered by date_added DESC). Used when a file is
     // opened from outside the app so the just-played video jumps to the top.
@@ -60,6 +80,9 @@ public:
     [[nodiscard]] std::vector<MediaItem> searchMedia(const QString& query)     const;
     [[nodiscard]] std::optional<MediaItem> getMediaById(int id)                const;
     [[nodiscard]] std::optional<MediaItem> getMediaByPath(const QString& path) const;
+
+    // Bookmarks for one media row, ORDER BY position ASC.
+    [[nodiscard]] std::vector<Bookmark> getBookmarks(int mediaId) const;
 
 private:
     QSqlDatabase m_db;

@@ -20,6 +20,8 @@
 #include <QSlider>
 #include <QComboBox>
 #include <QGroupBox>
+#include <QListWidget>
+#include <QInputDialog>
 #include <QFrame>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -1264,6 +1266,33 @@ QWidget* MainWindow::buildLeftPanel()
 
     layout->addWidget(metaGroup);
 
+    // ---- Bookmarks (per-video timestamp markers) ----
+    auto* bmGroup  = new QGroupBox("북마크");
+    auto* bmLayout = new QVBoxLayout(bmGroup);
+    bmLayout->setContentsMargins(10, 8, 10, 10);
+    bmLayout->setSpacing(8);
+
+    m_bookmarkList = new QListWidget;
+    m_bookmarkList->setMaximumHeight(120);
+    m_bookmarkList->setToolTip("더블클릭으로 해당 위치로 이동");
+    bmLayout->addWidget(m_bookmarkList);
+
+    auto* bmBtnRow = new QHBoxLayout;
+    bmBtnRow->setSpacing(6);
+
+    m_addBookmarkButton = makeIconButton(Icons::BookmarkAdd,
+                                         "현재 위치 추가 (Ctrl+B)", 36, 20);
+    bmBtnRow->addWidget(m_addBookmarkButton);
+    bmBtnRow->addWidget(new QLabel("현재 위치 추가"));
+    bmBtnRow->addStretch();
+
+    m_removeBookmarkButton = makeIconButton(Icons::Delete, "선택한 북마크 삭제",
+                                            36, 20, ThemeManager::danger());
+    bmBtnRow->addWidget(m_removeBookmarkButton);
+
+    bmLayout->addLayout(bmBtnRow);
+    layout->addWidget(bmGroup);
+
     return panel;
 }
 
@@ -1528,6 +1557,27 @@ void MainWindow::setupConnections()
             m_metaDirtyForId = m_currentItem->id;
         }
     });
+
+    // ---- Bookmarks ----
+    connect(m_addBookmarkButton, &QPushButton::clicked,
+            this, &MainWindow::onAddBookmark);
+    connect(m_removeBookmarkButton, &QPushButton::clicked,
+            this, &MainWindow::onRemoveBookmark);
+    connect(m_bookmarkList, &QListWidget::itemDoubleClicked,
+            this, &MainWindow::onBookmarkActivated);
+    // Right-click context menu = delete the bookmark under the cursor.
+    m_bookmarkList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_bookmarkList, &QListWidget::customContextMenuRequested,
+            this, [this](const QPoint& pos) {
+                auto* item = m_bookmarkList->itemAt(pos);
+                if (!item)
+                    return;
+                m_bookmarkList->setCurrentItem(item);
+                QMenu menu(this);
+                QAction* del = menu.addAction("삭제");
+                if (menu.exec(m_bookmarkList->mapToGlobal(pos)) == del)
+                    onRemoveBookmark();
+            });
 
     // ---- Transport ----
     connect(m_prevButton,      &QPushButton::clicked,
@@ -1946,6 +1996,9 @@ void MainWindow::onPlaylistItemSelected(const QModelIndex& current,
 
     m_currentItem = optItem;
     loadCurrentItem(*m_currentItem);
+
+    // Bookmarks belong to the selected row — refresh after m_currentItem set.
+    refreshBookmarks();
 }
 
 void MainWindow::onPlaylistItemDoubleClicked(const QModelIndex& index)
@@ -1985,6 +2038,110 @@ void MainWindow::onSaveMetadata()
     // Explicit save clears the dirty flag so the auto-flush on the next
     // row switch / close doesn't redundantly re-write the same values.
     m_metaDirty = false;
+}
+
+// ============================================================
+// Slots — bookmarks (per-video timestamp markers)
+// ============================================================
+
+// Reload the bookmark list for the currently SELECTED item. Each row is
+// labelled "MM:SS  메모…" and stashes its bookmark id (UserRole) and
+// position in seconds (UserRole+1) for the jump/delete handlers.
+void MainWindow::refreshBookmarks()
+{
+    if (!m_bookmarkList)
+        return;
+
+    m_bookmarkList->clear();
+
+    if (!m_currentItem.has_value() || !m_db.isInitialized())
+        return;
+
+    const auto marks = m_db.getBookmarks(m_currentItem->id);
+    for (const auto& b : marks)
+    {
+        QString label = formatTime(b.position);
+        if (!b.note.isEmpty())
+            label += "  " + b.note;
+
+        auto* item = new QListWidgetItem(label, m_bookmarkList);
+        item->setData(Qt::UserRole,     b.id);
+        item->setData(Qt::UserRole + 1, b.position);
+    }
+}
+
+void MainWindow::onAddBookmark()
+{
+    // Bookmarks are anchored to a real playback position, so something must
+    // be playing. m_playingItem is the actually-playing entry.
+    if (!m_playingItem.has_value() || !m_db.isInitialized())
+    {
+        statusBar()->showMessage("재생 중인 영상이 없습니다", 2500);
+        return;
+    }
+
+    const double pos = m_mpvWidget->position();
+
+    // Optional note. Cancel still adds with an empty note (simplest path).
+    const QString note = QInputDialog::getText(
+        this, "북마크 추가",
+        QStringLiteral("%1 위치에 메모 (선택):").arg(formatTime(pos)));
+
+    const int id = m_db.addBookmark(m_playingItem->id, pos, note);
+    if (id < 0)
+    {
+        statusBar()->showMessage("북마크 추가에 실패했습니다", 2500);
+        return;
+    }
+
+    statusBar()->showMessage(
+        QStringLiteral("북마크 추가: %1").arg(formatTime(pos)), 2500);
+
+    // Only refresh the list if the playing item is the one being viewed.
+    if (m_currentItem.has_value() && m_currentItem->id == m_playingItem->id)
+        refreshBookmarks();
+}
+
+// Double-click a bookmark → seek to its position. If the selected item is
+// already playing we seek directly; otherwise we start it and arm a pending
+// seek (reusing the same m_pendingResumePos mechanism the fileLoaded handler
+// consumes) so the jump applies once the file is actually open.
+void MainWindow::onBookmarkActivated(QListWidgetItem* item)
+{
+    if (!item || !m_currentItem.has_value())
+        return;
+
+    const double pos = item->data(Qt::UserRole + 1).toDouble();
+
+    const bool isPlaying =
+        m_playingItem.has_value() && m_playingItem->id == m_currentItem->id;
+
+    if (isPlaying)
+    {
+        m_mpvWidget->seek(pos);
+        return;
+    }
+
+    // Not the playing item — start it, then let the fileLoaded handler seek.
+    const int row = m_playlistModel->rowForId(m_currentItem->id);
+    if (row < 0)
+        return;
+
+    playItemAtRow(row);
+    // playItemAtRow may have armed a resume seek; override it with the
+    // bookmark position so we land on the bookmark, not the resume point.
+    m_pendingResumePos = pos;
+}
+
+void MainWindow::onRemoveBookmark()
+{
+    auto* item = m_bookmarkList ? m_bookmarkList->currentItem() : nullptr;
+    if (!item || !m_db.isInitialized())
+        return;
+
+    const int id = item->data(Qt::UserRole).toInt();
+    if (m_db.removeBookmark(id))
+        refreshBookmarks();
 }
 
 // ============================================================
@@ -2160,6 +2317,13 @@ void MainWindow::createActions()
         QKeySequence(Qt::Key_F9),
         &MainWindow::onTakeScreenshot);
 
+    // Ctrl+B — add a bookmark at the current playback position. Ctrl+B is
+    // unused by the existing shortcut set.
+    m_actAddBookmark = make(
+        "addBookmark", "북마크 추가",
+        QKeySequence(Qt::CTRL | Qt::Key_B),
+        &MainWindow::onAddBookmark);
+
     // ---- Video adjustments ----
     // Aspect ratio entries live in a QActionGroup built in setupMenuBar()
     // (they're radio-style menu items, not single-shot shortcuts), so
@@ -2274,6 +2438,8 @@ void MainWindow::setupMenuBar()
     playMenu->addSeparator();
     playMenu->addAction(m_actToggleRepeat);
     playMenu->addAction(m_actToggleFullscreen);
+    playMenu->addSeparator();
+    playMenu->addAction(m_actAddBookmark);
 
     // --- 영상 ---
     // Video adjustments: aspect override, rotate, zoom/pan, deinterlace.
@@ -2864,6 +3030,8 @@ void MainWindow::refreshIcons()
     if (m_importThumbButton) m_importThumbButton->setIcon(Icons::icon(Icons::Image, normal, 18));
     if (m_autoThumbButton)   m_autoThumbButton->setIcon(Icons::icon(Icons::AutoFixHigh, normal, 18));
     if (m_saveButton)        m_saveButton->setIcon(Icons::icon(Icons::Save, ThemeManager::onAccent(), 18));
+    if (m_addBookmarkButton) m_addBookmarkButton->setIcon(Icons::icon(Icons::BookmarkAdd, normal, 20));
+    if (m_removeBookmarkButton) m_removeBookmarkButton->setIcon(Icons::icon(Icons::Delete, ThemeManager::danger(), 20));
 
     if (m_prevButton)       m_prevButton->setIcon(Icons::icon(Icons::SkipPrevious, normal, 24));
     if (m_frameBackButton)  m_frameBackButton->setIcon(Icons::icon(Icons::NavigateBefore, normal, 22));
