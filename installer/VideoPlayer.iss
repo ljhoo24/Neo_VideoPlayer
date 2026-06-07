@@ -15,7 +15,7 @@
 ; ============================================================
 
 #define MyAppName        "VideoPlayer"
-#define MyAppVersion     "1.0.2"
+#define MyAppVersion     "1.0.3"
 #define MyAppPublisher   "CustomMedia"
 #define MyAppExeName     "VideoPlayer.exe"
 #define MyProgId         "CustomMedia.VideoPlayer"
