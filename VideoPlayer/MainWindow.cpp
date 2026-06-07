@@ -49,6 +49,8 @@
 #include <QMenu>
 #include <QKeySequence>
 #include <QSettings>
+#include <QScreen>
+#include <QSignalBlocker>
 #include <QProxyStyle>
 #include <QStyleOptionSlider>
 #include <QResizeEvent>
@@ -895,6 +897,11 @@ MainWindow::MainWindow(QWidget* parent)
         m_resumeEnabled =
             s.value("playback/resumeEnabled", true).toBool();
 
+        // 항상 위 — restore the persisted always-on-top preference. Applied
+        // below (after the window is fully built) via onToggleAlwaysOnTop so
+        // the window flag + checkable action come up consistent.
+        m_alwaysOnTop = s.value("ui/alwaysOnTop", false).toBool();
+
         // 오디오 — restore the processing knobs and push them into the
         // mpv widget. "af" is a global mpv property so applying once here
         // (after m_mpvWidget exists) is enough; it persists across files.
@@ -966,6 +973,15 @@ MainWindow::MainWindow(QWidget* parent)
             if (m_fsTitleLabel) m_fsTitleLabel->hide();
         }
     });
+
+    // Apply the persisted "항상 위" preference once the window is on-screen.
+    // Deferred to the event loop because setWindowFlag()+show() only takes
+    // effect on a real native window — main() shows us right after construction.
+    if (m_alwaysOnTop)
+    {
+        m_actAlwaysOnTop->setChecked(true);
+        QTimer::singleShot(0, this, [this] { onToggleAlwaysOnTop(true); });
+    }
 }
 
 // ============================================================
@@ -2101,6 +2117,22 @@ void MainWindow::createActions()
         QKeySequence(Qt::Key_Escape),
         &MainWindow::onExitFullscreen);
 
+    // ---- 항상 위 / 미니 플레이어 (checkable) ----
+    // Ctrl+T / Ctrl+M avoid the in-use shortcut set. Both take a bool — the
+    // QAction::triggered(bool) overload delivers the new checked state — so
+    // the slots stay in sync with the menu automatically.
+    m_actAlwaysOnTop = make(
+        "alwaysOnTop", "항상 위",
+        QKeySequence(Qt::CTRL | Qt::Key_T),
+        &MainWindow::onToggleAlwaysOnTop);
+    m_actAlwaysOnTop->setCheckable(true);
+
+    m_actMiniPlayer = make(
+        "miniPlayer", "미니 플레이어",
+        QKeySequence(Qt::CTRL | Qt::Key_M),
+        &MainWindow::onToggleMiniPlayer);
+    m_actMiniPlayer->setCheckable(true);
+
     // ---- File / playlist ----
     m_actAddFiles = make(
         "addFiles", "파일 추가…",
@@ -2298,6 +2330,14 @@ void MainWindow::setupMenuBar()
     videoMenu->addAction(m_actDeinterlace);
     videoMenu->addSeparator();
     videoMenu->addAction(m_actResetVideoAdj);
+
+    // --- 보기 ---
+    // Window-presentation toggles. Always-on-top and mini player are
+    // checkable so the menu reflects current state; fullscreen lives in
+    // 재생 for historical reasons but is echoed here for discoverability.
+    auto* viewMenu = mb->addMenu("보기(&W)");
+    viewMenu->addAction(m_actAlwaysOnTop);
+    viewMenu->addAction(m_actMiniPlayer);
 
     // --- 도구 ---
     auto* toolsMenu = mb->addMenu("도구(&T)");
@@ -2502,6 +2542,11 @@ void MainWindow::onToggleFullscreen()
         return;
     }
 
+    // Mini and fullscreen are mutually exclusive — leave mini first so its
+    // panel/geometry restore runs before fullscreen takes over the window.
+    if (m_miniMode)
+        onToggleMiniPlayer(false);
+
     m_savedGeometry = saveGeometry();
 
     if (m_leftPanel) m_leftPanel->setVisible(false);
@@ -2558,6 +2603,106 @@ void MainWindow::onExitFullscreen()
     if (m_leftPanel) m_leftPanel->setVisible(true);
     menuBar()->setVisible(true);
     statusBar()->setVisible(true);
+}
+
+// ============================================================
+// Slot — 항상 위 (always-on-top)
+//   Set/clear Qt::WindowStaysOnTopHint. On Windows changing a window flag
+//   detaches the native window, so the window must be re-shown for the new
+//   flag to take effect — without the show() the change silently no-ops.
+//   We preserve normal/maximized state across the re-show.
+// ============================================================
+
+void MainWindow::onToggleAlwaysOnTop(bool on)
+{
+    m_alwaysOnTop = on;
+
+    // Keep the checkable action in sync (covers programmatic calls, e.g.
+    // mini mode forcing this on, where the trigger didn't come from the UI).
+    if (m_actAlwaysOnTop && m_actAlwaysOnTop->isChecked() != on)
+    {
+        QSignalBlocker block(m_actAlwaysOnTop);
+        m_actAlwaysOnTop->setChecked(on);
+    }
+
+    setWindowFlag(Qt::WindowStaysOnTopHint, on);
+    show();   // Windows requires a re-show after changing window flags.
+
+    // Persist the standalone preference. Don't persist while mini mode owns
+    // the on-top state, otherwise leaving mini could overwrite the user's
+    // real choice with mini's forced value.
+    if (!m_miniMode)
+        QSettings().setValue("ui/alwaysOnTop", on);
+}
+
+// ============================================================
+// Slot — 미니 플레이어 (compact PiP mode)
+//   Hide the left panel + menu/status bars, shrink to a small framed window,
+//   force always-on-top. Stays a NORMAL resizable window (not fullscreen).
+//   Mutually exclusive with fullscreen: entering exits fullscreen first.
+//   Leaving restores panels, geometry, and the user's pre-mini on-top state.
+// ============================================================
+
+void MainWindow::onToggleMiniPlayer(bool on)
+{
+    if (on == m_miniMode)
+        return;   // already in the requested state
+
+    if (on)
+    {
+        // Mini and fullscreen are mutually exclusive — drop fullscreen first.
+        if (isFullScreen())
+            onExitFullscreen();
+
+        m_preMiniGeometry = saveGeometry();
+        m_preMiniOnTop    = m_alwaysOnTop;
+        m_miniMode        = true;
+
+        if (m_leftPanel) m_leftPanel->setVisible(false);
+        menuBar()->setVisible(false);
+        statusBar()->setVisible(false);
+        // Keep the controls bar visible — a PiP player still needs play/seek.
+
+        // Force always-on-top while mini. Pass true so the action + flag sync;
+        // m_miniMode is already set so this won't clobber the persisted pref.
+        onToggleAlwaysOnTop(true);
+
+        // Shrink to a small 16:9-ish window in the bottom-right corner of the
+        // screen the window currently sits on.
+        showNormal();   // ensure we're not maximized before resizing
+        const QSize miniSize(480, 300);
+        resize(miniSize);
+        if (auto* scr = screen())
+        {
+            const QRect avail = scr->availableGeometry();
+            const int margin = 16;
+            move(avail.right()  - miniSize.width()  - margin,
+                 avail.bottom() - miniSize.height() - margin);
+        }
+    }
+    else
+    {
+        m_miniMode = false;
+
+        if (m_leftPanel) m_leftPanel->setVisible(true);
+        menuBar()->setVisible(true);
+        statusBar()->setVisible(true);
+
+        // Restore on-top to whatever it was before mini (so we don't strand
+        // the window on-top if the user hadn't asked for "항상 위").
+        onToggleAlwaysOnTop(m_preMiniOnTop);
+
+        showNormal();
+        if (!m_preMiniGeometry.isEmpty())
+            restoreGeometry(m_preMiniGeometry);
+    }
+
+    // Sync the checkable action (covers shortcut/programmatic toggles).
+    if (m_actMiniPlayer && m_actMiniPlayer->isChecked() != on)
+    {
+        QSignalBlocker block(m_actMiniPlayer);
+        m_actMiniPlayer->setChecked(on);
+    }
 }
 
 // ============================================================

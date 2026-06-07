@@ -113,6 +113,8 @@ private slots:
     // ---- View ----
     void onToggleFullscreen();
     void onExitFullscreen();    // Esc — no-op when not fullscreen
+    void onToggleAlwaysOnTop(bool on);   // 항상 위 — keep window above others
+    void onToggleMiniPlayer(bool on);    // 미니 플레이어 — compact PiP mode
 
 protected:
     void resizeEvent(QResizeEvent* e) override;
@@ -133,6 +135,18 @@ private:
     QLabel*          m_fsTitleLabel{nullptr};  // top OSD title overlay (fullscreen only)
     QByteArray       m_savedGeometry;   // geometry snapshot before entering fullscreen
     QTimer*          m_fsHideTimer{nullptr};  // auto-hide controls overlay in fullscreen
+
+    // ---- Always-on-top + mini player (PiP) ----
+    // m_alwaysOnTop mirrors the user's "항상 위" choice (persisted). Mini mode
+    // forces on-top regardless; on leaving mini we restore on-top to exactly
+    // this value so the user's standalone preference isn't stranded.
+    // m_preMiniGeometry snapshots geometry before entering mini so toggling
+    // off restores the previous window size/position. m_preMiniOnTop records
+    // the on-top state at mini-entry for the same restore-cleanly reason.
+    bool             m_alwaysOnTop{false};
+    bool             m_miniMode{false};
+    bool             m_preMiniOnTop{false};
+    QByteArray       m_preMiniGeometry;
 
     // ---- Left panel widgets ----
     QLineEdit*       m_searchEdit{nullptr};
@@ -196,6 +210,8 @@ private:
     QAction* m_actFrameBackStep{nullptr};
     QAction* m_actToggleFullscreen{nullptr};
     QAction* m_actExitFullscreen{nullptr};
+    QAction* m_actAlwaysOnTop{nullptr};   // checkable — 항상 위
+    QAction* m_actMiniPlayer{nullptr};    // checkable — 미니 플레이어
     QAction* m_actOptions{nullptr};
     QAction* m_actQuit{nullptr};
 
