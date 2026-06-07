@@ -78,6 +78,8 @@ set(SOURCES
     VideoPlayer/MpvPlayerWidget.cpp
     VideoPlayer/PlaylistModel.cpp
     VideoPlayer/OptionsDialog.cpp
+    VideoPlayer/IconFont.cpp
+    VideoPlayer/resources/resources.qrc
 )
 
 if(WIN32)
@@ -90,6 +92,7 @@ set(HEADERS
     VideoPlayer/MpvPlayerWidget.h
     VideoPlayer/PlaylistModel.h
     VideoPlayer/OptionsDialog.h
+    VideoPlayer/IconFont.h
 )
 
 # WIN32 subsystem = no console window in release builds

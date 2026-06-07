@@ -2,6 +2,7 @@
 
 #include "MpvPlayerWidget.h"
 #include "OptionsDialog.h"
+#include "IconFont.h"
 
 #include <QApplication>
 #include <QSplitter>
@@ -12,6 +13,7 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QSpinBox>
+#include <QAbstractSpinBox>
 #include <QTextEdit>
 #include <QSlider>
 #include <QComboBox>
@@ -802,8 +804,8 @@ static QString findIndexSheetFor(const QString& videoPath)
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
-    setWindowTitle("Video Player");
-    setMinimumSize(960, 600);
+    setWindowTitle("VideoPlayer");
+    setMinimumSize(980, 620);
     resize(1280, 720);
 
     setupDatabase();
@@ -982,37 +984,49 @@ void MainWindow::setupUI()
 // ----------------------------------------
 // Left panel: search + playlist + meta
 // ----------------------------------------
+// Small helper: a flat, round, icon-only button used in the toolbars.
+static QPushButton* makeIconButton(char16_t glyph, const QString& tip,
+                                   int diameter = 36, int iconPx = 20,
+                                   const QColor& color = QColor(0xcf, 0xd3, 0xda))
+{
+    auto* btn = new QPushButton;
+    btn->setIcon(Icons::icon(glyph, color, iconPx));
+    btn->setIconSize(QSize(iconPx, iconPx));
+    btn->setFixedSize(diameter, diameter);
+    btn->setProperty("iconButton", true);
+    btn->setCursor(Qt::PointingHandCursor);
+    btn->setToolTip(tip);
+    return btn;
+}
+
 QWidget* MainWindow::buildLeftPanel()
 {
     auto* panel  = new QWidget;
     auto* layout = new QVBoxLayout(panel);
-    layout->setContentsMargins(4, 4, 4, 4);
-    layout->setSpacing(6);
+    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setSpacing(10);
 
     // ---- Search + Add / Remove ----
     auto* searchRow = new QHBoxLayout;
+    searchRow->setSpacing(6);
 
     m_searchEdit = new QLineEdit;
-    m_searchEdit->setPlaceholderText("Search titles...");
+    m_searchEdit->setPlaceholderText("제목 검색…");
     m_searchEdit->setClearButtonEnabled(true);
+    m_searchEdit->addAction(Icons::icon(Icons::Search, QColor(0x9a, 0xa0, 0xa8), 18),
+                            QLineEdit::LeadingPosition);
     searchRow->addWidget(m_searchEdit);
 
-    auto* addBtn = new QPushButton("＋");
-    addBtn->setToolTip("영상 파일을 선택하여 플레이리스트에 추가");
-    addBtn->setFixedWidth(32);
+    auto* addBtn = makeIconButton(Icons::Add, "영상 파일 추가");
     connect(addBtn, &QPushButton::clicked, this, &MainWindow::onAddFiles);
     searchRow->addWidget(addBtn);
 
-    auto* addFolderBtn = new QPushButton(QString::fromUtf8("📁"));
-    addFolderBtn->setToolTip("폴더를 선택하여 하위 디렉토리까지 재귀적으로 스캔");
-    addFolderBtn->setFixedWidth(32);
-    connect(addFolderBtn, &QPushButton::clicked,
-            this, &MainWindow::onAddFolder);
+    auto* addFolderBtn = makeIconButton(Icons::FolderOpen, "폴더 추가 (하위까지 스캔)");
+    connect(addFolderBtn, &QPushButton::clicked, this, &MainWindow::onAddFolder);
     searchRow->addWidget(addFolderBtn);
 
-    auto* removeBtn = new QPushButton("－");
-    removeBtn->setToolTip("Remove selected entry from playlist");
-    removeBtn->setFixedWidth(32);
+    auto* removeBtn = makeIconButton(Icons::Delete, "선택 항목 제거",
+                                     36, 20, QColor(0xe0, 0x8a, 0x8a));
     connect(removeBtn, &QPushButton::clicked, this, &MainWindow::onRemoveSelected);
     searchRow->addWidget(removeBtn);
 
@@ -1021,9 +1035,9 @@ QWidget* MainWindow::buildLeftPanel()
     // ---- Rating filter row ----
     {
         auto* filterRow = new QHBoxLayout;
-        filterRow->setSpacing(4);
+        filterRow->setSpacing(6);
 
-        auto* starLabel = new QLabel("⭐ 최소 점수");
+        auto* starLabel = new QLabel("최소 평점");
         starLabel->setToolTip("이 점수 이상인 영상만 목록에 표시합니다");
         filterRow->addWidget(starLabel);
 
@@ -1032,12 +1046,13 @@ QWidget* MainWindow::buildLeftPanel()
         m_minRatingSpinBox->setSingleStep(5);
         m_minRatingSpinBox->setValue(0);
         m_minRatingSpinBox->setSpecialValueText("전체");   // 0 → "전체" 표시
-        m_minRatingSpinBox->setFixedWidth(72);
-        m_minRatingSpinBox->setToolTip("0 = 전체 표시");
+        m_minRatingSpinBox->setButtonSymbols(QAbstractSpinBox::NoButtons);
+        m_minRatingSpinBox->setAlignment(Qt::AlignCenter);
+        m_minRatingSpinBox->setFixedWidth(70);
+        m_minRatingSpinBox->setToolTip("스크롤 또는 입력 · 0 = 전체 표시");
         filterRow->addWidget(m_minRatingSpinBox);
 
         auto* resetBtn = new QPushButton("초기화");
-        resetBtn->setFixedWidth(52);
         resetBtn->setToolTip("점수 필터 해제");
         connect(resetBtn, &QPushButton::clicked, this, [this] {
             m_minRatingSpinBox->setValue(0);
@@ -1057,68 +1072,81 @@ QWidget* MainWindow::buildLeftPanel()
     // Enables bulk remove from the playlist.
     m_playlistView->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_playlistView->setAlternatingRowColors(true);
-    m_playlistView->setMinimumHeight(100);
+    m_playlistView->setMinimumHeight(120);
     m_playlistView->setAcceptDrops(true);
     m_playlistView->setDropIndicatorShown(true);
+    m_playlistView->setUniformItemSizes(true);
     m_playlistView->installEventFilter(this);
     layout->addWidget(m_playlistView, 1);   // stretch factor 1
 
     // ---- Index-sheet (thumbnail) preview ----
-    auto* thumbGroup  = new QGroupBox("Index Sheet Preview");
+    auto* thumbGroup  = new QGroupBox("인덱스 시트");
     auto* thumbLayout = new QVBoxLayout(thumbGroup);
-    thumbLayout->setContentsMargins(4, 4, 4, 4);
+    thumbLayout->setContentsMargins(10, 8, 10, 10);
+    thumbLayout->setSpacing(8);
 
-    m_thumbnailLabel = new ThumbnailLabel("No preview");
+    m_thumbnailLabel = new ThumbnailLabel("미리보기 없음");
     m_thumbnailLabel->setAlignment(Qt::AlignCenter);
-    m_thumbnailLabel->setMinimumHeight(260);
+    m_thumbnailLabel->setMinimumHeight(240);
     m_thumbnailLabel->setScaledContents(false);
     // Don't let the pixmap lock the label to its native size — we rescale
     // manually on every resizeEvent and want the label to be free to
     // shrink below the source image.
     m_thumbnailLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     m_thumbnailLabel->setStyleSheet(
-        "QLabel { background:#1a1a1a; color:#777; "
-        "         border:1px solid #444; font-size:11px; }");
-    m_thumbnailLabel->setToolTip("더블클릭하여 이미지 크게 보기");
+        "QLabel { background:#1a1b1e; color:#6b7079; "
+        "         border:1px dashed #3a3d44; border-radius:6px; font-size:12px; }");
+    m_thumbnailLabel->setToolTip("더블클릭하여 크게 보기");
     thumbLayout->addWidget(m_thumbnailLabel);
 
     // ---- Thumbnail action buttons ----
     auto* thumbBtnRow = new QHBoxLayout;
-    thumbBtnRow->setSpacing(4);
+    thumbBtnRow->setSpacing(6);
 
-    m_importThumbButton = new QPushButton("📂 이미지 가져오기");
-    m_importThumbButton->setToolTip("JPG/PNG 파일을 썸네일로 지정합니다");
+    m_importThumbButton = new QPushButton("  이미지 가져오기");
+    m_importThumbButton->setIcon(Icons::icon(Icons::Image, QColor(0xcf, 0xd3, 0xda), 18));
+    m_importThumbButton->setToolTip("JPG/PNG 파일을 썸네일로 지정");
     thumbBtnRow->addWidget(m_importThumbButton);
 
-    m_autoThumbButton = new QPushButton("⚡ 자동 생성");
-    m_autoThumbButton->setToolTip("영상 10% 지점에서 자동으로 썸네일을 캡처합니다");
+    m_autoThumbButton = new QPushButton("  자동 생성");
+    m_autoThumbButton->setIcon(Icons::icon(Icons::AutoFixHigh, QColor(0xcf, 0xd3, 0xda), 18));
+    m_autoThumbButton->setToolTip("영상 10% 지점에서 썸네일 자동 캡처");
     thumbBtnRow->addWidget(m_autoThumbButton);
 
     thumbLayout->addLayout(thumbBtnRow);
-    layout->addWidget(thumbGroup, 2);   // stretch factor 2 — 썸네일이 플레이리스트보다 더 큰 비율
+    layout->addWidget(thumbGroup, 2);   // 썸네일이 플레이리스트보다 더 큰 비율
 
     // ---- Rating & Memo ----
-    auto* metaGroup  = new QGroupBox("Rating && Memo");
+    auto* metaGroup  = new QGroupBox("평점 & 메모");
     auto* metaLayout = new QVBoxLayout(metaGroup);
-    metaLayout->setSpacing(4);
+    metaLayout->setContentsMargins(10, 8, 10, 10);
+    metaLayout->setSpacing(8);
 
     auto* ratingRow = new QHBoxLayout;
-    ratingRow->addWidget(new QLabel("Score (0 – 100):"));
+    ratingRow->setSpacing(6);
+    ratingRow->addWidget(new QLabel("평점"));
     m_ratingSpinBox = new QSpinBox;
     m_ratingSpinBox->setRange(0, 100);
     m_ratingSpinBox->setSingleStep(5);
     m_ratingSpinBox->setValue(0);
+    m_ratingSpinBox->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    m_ratingSpinBox->setAlignment(Qt::AlignCenter);
+    m_ratingSpinBox->setFixedWidth(64);
+    m_ratingSpinBox->setToolTip("0 – 100 · 스크롤 또는 입력");
     ratingRow->addWidget(m_ratingSpinBox);
+    ratingRow->addWidget(new QLabel("/ 100"));
     ratingRow->addStretch();
     metaLayout->addLayout(ratingRow);
 
-    metaLayout->addWidget(new QLabel("Memo:"));
     m_memoEdit = new QTextEdit;
     m_memoEdit->setMaximumHeight(90);
-    m_memoEdit->setPlaceholderText("Your notes / review…");
+    m_memoEdit->setPlaceholderText("메모 / 감상…");
     metaLayout->addWidget(m_memoEdit);
 
-    m_saveButton = new QPushButton("Save Rating && Memo");
+    m_saveButton = new QPushButton("  저장");
+    m_saveButton->setObjectName("AccentButton");
+    m_saveButton->setIcon(Icons::icon(Icons::Save, QColor(0xff, 0xff, 0xff), 18));
+    m_saveButton->setToolTip("평점과 메모 저장");
     metaLayout->addWidget(m_saveButton);
 
     layout->addWidget(metaGroup);
@@ -1153,19 +1181,24 @@ QWidget* MainWindow::buildRightPanel()
 // ----------------------------------------
 QWidget* MainWindow::buildControlsBar()
 {
+    const QColor kIcon(0xcf, 0xd3, 0xda);   // normal icon colour
+
     auto* bar = new QFrame;
-    bar->setFrameShape(QFrame::StyledPanel);
-    bar->setFixedHeight(84);
+    bar->setObjectName("ControlsBar");
+    bar->setFixedHeight(96);
 
     auto* vl = new QVBoxLayout(bar);
-    vl->setContentsMargins(8, 4, 8, 4);
-    vl->setSpacing(4);
+    vl->setContentsMargins(16, 8, 16, 10);
+    vl->setSpacing(8);
 
-    // ---- Seek row ----
+    // ---- Seek row: elapsed/total + slider ----
     auto* seekRow = new QHBoxLayout;
+    seekRow->setSpacing(10);
 
     m_timeLabel = new QLabel("00:00 / 00:00");
-    m_timeLabel->setFixedWidth(120);
+    m_timeLabel->setStyleSheet("color:#9aa0a8; font-family:'Consolas','Cascadia Mono',monospace;");
+    m_timeLabel->setMinimumWidth(120);
+    m_timeLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
     seekRow->addWidget(m_timeLabel);
 
     m_seekSlider = new QSlider(Qt::Horizontal);
@@ -1176,8 +1209,6 @@ QWidget* MainWindow::buildControlsBar()
     // Don't steal arrow keys — our QAction shortcuts handle relative seek.
     m_seekSlider->setFocusPolicy(Qt::NoFocus);
     // Click-on-groove = jump-to-here (absolute), not pageStep nudge.
-    // QWidget::setStyle does NOT take ownership, so we parent the
-    // proxy style to the slider for automatic destruction.
     {
         auto* proxy = new AbsoluteSliderStyle(m_seekSlider->style());
         proxy->setParent(m_seekSlider);
@@ -1187,65 +1218,65 @@ QWidget* MainWindow::buildControlsBar()
 
     vl->addLayout(seekRow);
 
-    // ---- Transport row ----
-    auto* transportRow = new QHBoxLayout;
-    transportRow->setSpacing(4);
+    // ---- Transport row: [volume] --- [prev play stop next] --- [extras] ----
+    auto* row = new QHBoxLayout;
+    row->setSpacing(8);
 
-    m_prevButton      = new QPushButton("⏮");
-    m_playPauseButton = new QPushButton("▶");
-    m_stopButton      = new QPushButton("⏹");
-    m_nextButton      = new QPushButton("⏭");
-
-    for (auto* btn : { m_prevButton, m_playPauseButton, m_stopButton, m_nextButton })
-    {
-        btn->setFixedWidth(42);
-        // Don't let the buttons swallow Space / arrow keys — those are
-        // owned by the QAction shortcuts on MainWindow.
-        btn->setFocusPolicy(Qt::NoFocus);
-        transportRow->addWidget(btn);
-    }
-
-    transportRow->addSpacing(8);
-    transportRow->addWidget(new QLabel("Vol:"));
+    // Left group: mute toggle + volume slider
+    m_volumeButton = makeIconButton(Icons::VolumeUp, "음소거", 32, 18, kIcon);
+    m_volumeButton->setFocusPolicy(Qt::NoFocus);
+    row->addWidget(m_volumeButton);
 
     m_volumeSlider = new QSlider(Qt::Horizontal);
     m_volumeSlider->setRange(0, 100);
-    m_volumeSlider->setValue(80);
-    m_volumeSlider->setFixedWidth(110);
-    transportRow->addWidget(m_volumeSlider);
+    m_volumeSlider->setValue(m_lastVolume);
+    m_volumeSlider->setFixedWidth(120);
+    m_volumeSlider->setFocusPolicy(Qt::NoFocus);
+    row->addWidget(m_volumeSlider);
 
-    transportRow->addStretch();
+    row->addStretch();
 
-    // 3-step upscale selector — replaces the old HQ checkbox.
+    // Center group: transport. Play is the primary, oversized button.
+    m_prevButton      = makeIconButton(Icons::SkipPrevious, "이전", 40, 24, kIcon);
+    m_playPauseButton = makeIconButton(Icons::PlayArrow,    "재생/일시정지", 46, 28,
+                                       QColor(0xff, 0xff, 0xff));
+    m_playPauseButton->setObjectName("PrimaryButton");
+    m_stopButton      = makeIconButton(Icons::Stop,         "정지", 40, 24, kIcon);
+    m_nextButton      = makeIconButton(Icons::SkipNext,     "다음", 40, 24, kIcon);
+
+    for (auto* btn : { m_prevButton, m_playPauseButton, m_stopButton, m_nextButton })
+    {
+        btn->setFocusPolicy(Qt::NoFocus);
+        row->addWidget(btn);
+    }
+
+    row->addStretch();
+
+    // Right group: upscale, repeat, screenshot
     // Item order MUST match MpvPlayerWidget::UpscaleMode (Off=0,
-    // Standard=1, NvidiaNis=2) since we use currentIndex() directly
-    // as the enum value, both in the connection below and in the
-    // restore-on-startup logic in the MainWindow constructor.
+    // Standard=1, NvidiaNis=2) — currentIndex() is used as the enum value.
     m_upscaleCombo = new QComboBox;
-    m_upscaleCombo->addItem("업스케일: 끄기");                  // Off
-    m_upscaleCombo->addItem("업스케일: 표준 (Lanczos)");        // Standard
-    m_upscaleCombo->addItem("업스케일: NVIDIA NIS");            // NvidiaNis
+    m_upscaleCombo->addItem("끄기");          // Off
+    m_upscaleCombo->addItem("표준");          // Standard
+    m_upscaleCombo->addItem("NVIDIA NIS");    // NvidiaNis
+    m_upscaleCombo->setFixedWidth(118);
     m_upscaleCombo->setToolTip(
+        "업스케일 모드\n"
         "끄기: 빠름 (bilinear)\n"
         "표준: Lanczos + 가벼운 샤프닝 (모든 GPU)\n"
-        "NVIDIA NIS: GPU 셰이더 기반 적응형 업스케일 + 샤프닝");
-    transportRow->addWidget(m_upscaleCombo);
+        "NVIDIA NIS: GPU 셰이더 적응형 업스케일 + 샤프닝");
+    row->addWidget(m_upscaleCombo);
 
-    transportRow->addSpacing(8);
+    m_repeatButton = makeIconButton(Icons::Repeat, "반복: 없음 → 1편 → 전체", 40, 22, kIcon);
+    m_repeatButton->setFocusPolicy(Qt::NoFocus);
+    row->addWidget(m_repeatButton);
 
-    m_repeatButton = new QPushButton;
-    m_repeatButton->setFixedWidth(80);
-    m_repeatButton->setToolTip("반복 모드 전환: 없음 → 1편 → 전체");
-    transportRow->addWidget(m_repeatButton);
+    m_screenshotButton = makeIconButton(Icons::PhotoCamera,
+                                        "현재 프레임을 썸네일로 저장", 40, 22, kIcon);
+    m_screenshotButton->setFocusPolicy(Qt::NoFocus);
+    row->addWidget(m_screenshotButton);
 
-    transportRow->addSpacing(8);
-
-    m_screenshotButton = new QPushButton("📷 Set Thumbnail");
-    m_screenshotButton->setToolTip(
-        "Capture the current frame and save it as this video's thumbnail");
-    transportRow->addWidget(m_screenshotButton);
-
-    vl->addLayout(transportRow);
+    vl->addLayout(row);
 
     return bar;
 }
@@ -1296,6 +1327,25 @@ void MainWindow::setupConnections()
     // ---- Volume ----
     connect(m_volumeSlider, &QSlider::valueChanged,
             m_mpvWidget, &MpvPlayerWidget::setVolume);
+
+    // Reflect the level on the mute-button icon (off / down / up).
+    connect(m_volumeSlider, &QSlider::valueChanged, this, [this](int v) {
+        const QColor c(0xcf, 0xd3, 0xda);
+        const char16_t g = (v == 0)  ? Icons::VolumeOff
+                          : (v < 50)  ? Icons::VolumeDown
+                                      : Icons::VolumeUp;
+        m_volumeButton->setIcon(Icons::icon(g, c, 18));
+        if (v > 0)
+            m_lastVolume = v;   // remember for un-mute
+    });
+
+    // Mute toggle: 0 ↔ last non-zero level.
+    connect(m_volumeButton, &QPushButton::clicked, this, [this] {
+        if (m_volumeSlider->value() > 0)
+            m_volumeSlider->setValue(0);
+        else
+            m_volumeSlider->setValue(m_lastVolume > 0 ? m_lastVolume : 80);
+    });
 
     // ---- Upscaling ----
     // Combo index matches MpvPlayerWidget::UpscaleMode (Off=0,
@@ -1957,19 +2007,22 @@ void MainWindow::onRepeatClicked()
 
 void MainWindow::updateRepeatButton()
 {
+    const QColor off(0xcf, 0xd3, 0xda);
+    const QColor on (0x4f, 0x93, 0xff);   // accent — active repeat
+
     switch (m_repeatMode)
     {
     case RepeatMode::None:
-        m_repeatButton->setText("반복 없음");
-        m_repeatButton->setStyleSheet("");
+        m_repeatButton->setIcon(Icons::icon(Icons::Repeat, off, 22));
+        m_repeatButton->setToolTip("반복: 없음 (클릭 → 1편)");
         break;
     case RepeatMode::One:
-        m_repeatButton->setText("1편 반복");
-        m_repeatButton->setStyleSheet("color: #4da6ff; font-weight: bold;");
+        m_repeatButton->setIcon(Icons::icon(Icons::RepeatOne, on, 22));
+        m_repeatButton->setToolTip("반복: 1편 (클릭 → 전체)");
         break;
     case RepeatMode::All:
-        m_repeatButton->setText("전체 반복");
-        m_repeatButton->setStyleSheet("color: #4da6ff; font-weight: bold;");
+        m_repeatButton->setIcon(Icons::icon(Icons::Repeat, on, 22));
+        m_repeatButton->setToolTip("반복: 전체 (클릭 → 없음)");
         break;
     }
 }
@@ -2063,7 +2116,9 @@ void MainWindow::onDurationChanged(double seconds)
 
 void MainWindow::onPauseStateChanged(bool paused)
 {
-    m_playPauseButton->setText(paused ? "▶" : "⏸");
+    m_playPauseButton->setIcon(
+        Icons::icon(paused ? Icons::PlayArrow : Icons::Pause,
+                    QColor(0xff, 0xff, 0xff), 28));
 }
 
 void MainWindow::onFileEnded()
@@ -2436,7 +2491,7 @@ void MainWindow::updateThumbnailDisplay(const QString& path)
     }
 
     m_thumbnailLabel->clearSource();
-    m_thumbnailLabel->setText("No preview\navailable");
+    m_thumbnailLabel->setText("미리보기 없음");
 }
 
 void MainWindow::refreshPlaylist()

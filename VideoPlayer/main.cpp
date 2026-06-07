@@ -16,6 +16,7 @@
 #include <stdexcept>
 
 #include "MainWindow.h"
+#include "IconFont.h"
 
 // ============================================================
 // File-based message handler — captures qDebug/qWarning/qCritical
@@ -139,6 +140,16 @@ int main(int argc, char* argv[])
     }
 
     applyDarkPalette(app);
+
+    // ---- Load embedded icon font + apply the modern dark stylesheet ----
+    Icons::loadFont();
+    {
+        QFile qss(QStringLiteral(":/theme.qss"));
+        if (qss.open(QIODevice::ReadOnly | QIODevice::Text))
+            app.setStyleSheet(QString::fromUtf8(qss.readAll()));
+        else
+            qWarning() << "[Theme] could not load :/theme.qss";
+    }
 
     try
     {

@@ -129,7 +129,9 @@ private:
     QPushButton* m_nextButton{nullptr};
     QSlider*     m_seekSlider{nullptr};
     QLabel*      m_timeLabel{nullptr};
+    QPushButton* m_volumeButton{nullptr};
     QSlider*     m_volumeSlider{nullptr};
+    int          m_lastVolume{80};   // restored when un-muting
     QComboBox*   m_upscaleCombo{nullptr};
     QPushButton* m_screenshotButton{nullptr};
     QPushButton* m_repeatButton{nullptr};
