@@ -258,17 +258,19 @@ void OptionsDialog::buildGeneralTab()
     themeForm->setContentsMargins(10, 12, 10, 12);
     themeForm->setSpacing(8);
 
-    // 다크/라이트 — index 0 = 다크, index 1 = 라이트, mirrored into
-    // m_themeIsDark so onAccepted / the caller can read it back.
+    // 테마 모드 — index 0 = 다크, 1 = 라이트, 2 = 자동(시스템). Mirrored
+    // into m_themeMode so onAccepted / the caller can read it back.
     m_themeCombo = new QComboBox(themeGroup);
-    m_themeCombo->addItem("다크");      // index 0 → dark = true
-    m_themeCombo->addItem("라이트");    // index 1 → dark = false
+    m_themeCombo->addItem("다크");          // 0
+    m_themeCombo->addItem("라이트");        // 1
+    m_themeCombo->addItem("자동 (시스템)");  // 2
     m_themeCombo->setToolTip(
-        "어두운 테마 또는 밝은 테마를 선택합니다. OK 누르면 즉시 반영됩니다.");
-    m_themeCombo->setCurrentIndex(m_themeIsDark ? 0 : 1);
+        "다크 / 라이트, 또는 자동(시스템)을 선택합니다.\n"
+        "자동은 Windows 앱 모드 설정을 따라가며, 변경 시 즉시 반영됩니다.");
+    m_themeCombo->setCurrentIndex(m_themeMode);
     connect(m_themeCombo,
             QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this](int idx) { m_themeIsDark = (idx == 0); });
+            this, [this](int idx) { m_themeMode = idx; });
     themeForm->addRow("모드", m_themeCombo);
 
     // 강조 색 — opens a QColorDialog; the button's background shows the
@@ -308,11 +310,11 @@ void OptionsDialog::updateAccentSwatch()
             .arg(m_accentColor.name()));
 }
 
-void OptionsDialog::setThemeIsDark(bool dark)
+void OptionsDialog::setThemeMode(int mode)
 {
-    m_themeIsDark = dark;
+    m_themeMode = qBound(0, mode, 2);
     if (m_themeCombo)
-        m_themeCombo->setCurrentIndex(dark ? 0 : 1);
+        m_themeCombo->setCurrentIndex(m_themeMode);
 }
 
 void OptionsDialog::setAccentColor(const QColor& color)
@@ -428,11 +430,12 @@ void OptionsDialog::onResetDefaults()
 {
     const auto ans = QMessageBox::question(
         this, "기본값 복원",
-        "모든 단축키를 기본값으로 되돌릴까요?",
+        "단축키, 테마, 강조 색을 모두 기본값으로 되돌릴까요?",
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     if (ans != QMessageBox::Yes)
         return;
 
+    // 단축키
     for (int i = 0; i < m_actions.size() && i < m_defaults.size(); ++i)
     {
         auto* edit = qobject_cast<QKeySequenceEdit*>(
@@ -440,4 +443,9 @@ void OptionsDialog::onResetDefaults()
         if (edit)
             edit->setKeySequence(m_defaults[i]);
     }
+
+    // 테마 → 다크(기본), 강조 색 → 기본 파랑(#4f93ff). 콤보를 통해 설정해
+    // m_themeMode 미러링도 함께 갱신되게 한다. (OK 누를 때 실제 반영)
+    setThemeMode(0);                         // 다크
+    setAccentColor(QColor(0x4f, 0x93, 0xff)); // 기본 강조 색 + 스와치 갱신
 }

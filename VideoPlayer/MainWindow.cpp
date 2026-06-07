@@ -6,6 +6,7 @@
 #include "ThemeManager.h"
 
 #include <QApplication>
+#include <QStyleHints>
 #include <QSplitter>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -1520,6 +1521,18 @@ void MainWindow::setupConnections()
             m_volumeSlider->setValue(m_lastVolume > 0 ? m_lastVolume : 80);
     });
 
+    // ---- Auto theme: follow the OS light/dark scheme live ----
+    // Only acts when the theme mode is "자동"; otherwise the explicit
+    // Dark/Light choice wins and we ignore system changes.
+    connect(qApp->styleHints(), &QStyleHints::colorSchemeChanged,
+            this, [this](Qt::ColorScheme) {
+                if (ThemeManager::theme() == ThemeManager::Theme::Auto)
+                {
+                    ThemeManager::apply(*qApp);
+                    refreshIcons();
+                }
+            });
+
     // ---- Upscaling ----
     // Combo index matches MpvPlayerWidget::UpscaleMode (Off=0,
     // Standard=1, NvidiaNis=2) by construction — see the item-add
@@ -2231,7 +2244,10 @@ void MainWindow::onOptionsTriggered()
     dlg.setPlaylistGridMode(m_playlistGridMode);
 
     // Seed the 테마 controls from the current ThemeManager state.
-    dlg.setThemeIsDark(ThemeManager::isDark());
+    // Combo order: 0 = Dark, 1 = Light, 2 = Auto.
+    dlg.setThemeMode(ThemeManager::theme() == ThemeManager::Theme::Light ? 1
+                   : ThemeManager::theme() == ThemeManager::Theme::Auto  ? 2
+                                                                         : 0);
     dlg.setAccentColor(ThemeManager::accent());
 
     if (dlg.exec() == QDialog::Accepted)
@@ -2262,9 +2278,11 @@ void MainWindow::onOptionsTriggered()
         // persists + re-applies the tokenized stylesheet/palette), then
         // recolour the code-drawn icons so they match live without a
         // restart.
-        ThemeManager::setTheme(dlg.themeIsDark()
-                                   ? ThemeManager::Theme::Dark
-                                   : ThemeManager::Theme::Light);
+        const ThemeManager::Theme tm =
+            dlg.themeMode() == 1 ? ThemeManager::Theme::Light
+          : dlg.themeMode() == 2 ? ThemeManager::Theme::Auto
+                                 : ThemeManager::Theme::Dark;
+        ThemeManager::setTheme(tm);
         ThemeManager::setAccent(dlg.accentColor());
         refreshIcons();
 

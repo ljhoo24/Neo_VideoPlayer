@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QStyleFactory>
+#include <QStyleHints>
 #include <QPalette>
 #include <QSettings>
 #include <QFile>
@@ -60,9 +61,25 @@ const Palette kLight {
     /* barBg         */ "#eceef1",
 };
 
+// Resolve the EFFECTIVE light/dark choice. Dark/Light are literal; Auto
+// asks the OS via QStyleHints::colorScheme() (Qt 6.5+). Unknown → dark.
+bool effectiveIsDark()
+{
+    switch (g_theme)
+    {
+    case ThemeManager::Theme::Light: return false;
+    case ThemeManager::Theme::Dark:  return true;
+    case ThemeManager::Theme::Auto:
+    default:
+        if (qApp)
+            return qApp->styleHints()->colorScheme() != Qt::ColorScheme::Light;
+        return true;
+    }
+}
+
 const Palette& activePalette()
 {
-    return (g_theme == ThemeManager::Theme::Light) ? kLight : kDark;
+    return effectiveIsDark() ? kDark : kLight;
 }
 
 // Build the full @TOKEN@ → hex map for the active theme, folding in the
@@ -107,8 +124,12 @@ void load()
 {
     QSettings s;
     const QString theme = s.value("ui/theme", "dark").toString();
-    g_theme = (theme.compare("light", Qt::CaseInsensitive) == 0)
-                  ? Theme::Light : Theme::Dark;
+    if (theme.compare("light", Qt::CaseInsensitive) == 0)
+        g_theme = Theme::Light;
+    else if (theme.compare("auto", Qt::CaseInsensitive) == 0)
+        g_theme = Theme::Auto;
+    else
+        g_theme = Theme::Dark;
 
     const QColor a(s.value("ui/accent", "#4f93ff").toString());
     if (a.isValid())
@@ -165,7 +186,10 @@ void apply(QApplication& app)
 void setTheme(Theme theme)
 {
     g_theme = theme;
-    QSettings().setValue("ui/theme", theme == Theme::Light ? "light" : "dark");
+    const char* name = theme == Theme::Light ? "light"
+                     : theme == Theme::Auto  ? "auto"
+                                             : "dark";
+    QSettings().setValue("ui/theme", name);
     if (auto* app = qobject_cast<QApplication*>(QCoreApplication::instance()))
         apply(*app);
 }
@@ -184,7 +208,7 @@ void setAccent(const QColor& accent)
 // State accessors
 // ============================================================
 Theme  theme()  { return g_theme; }
-bool   isDark() { return g_theme == Theme::Dark; }
+bool   isDark() { return effectiveIsDark(); }
 QColor accent() { return g_accent; }
 
 // ============================================================

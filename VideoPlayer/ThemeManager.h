@@ -27,7 +27,9 @@ class QApplication;
 // ============================================================
 namespace ThemeManager
 {
-enum class Theme { Dark, Light };
+// Dark / Light are explicit; Auto follows the OS colour scheme (resolved
+// live via QStyleHints::colorScheme()).
+enum class Theme { Dark, Light, Auto };
 
 // ---- Persistence ----
 // Load the saved theme + accent from QSettings ("ui/theme",

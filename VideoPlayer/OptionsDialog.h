@@ -61,10 +61,11 @@ public:
     bool playlistGridMode() const noexcept { return m_playlistGridMode; }
 
     // ---- 테마 ----
-    // 다크/라이트 선택 + 사용자 강조 색. Caller seeds both from the current
-    // ThemeManager state before exec() and reads them back after Accepted.
-    void   setThemeIsDark(bool dark);
-    bool   themeIsDark() const noexcept { return m_themeIsDark; }
+    // 테마 모드 (0 = 다크, 1 = 라이트, 2 = 자동/시스템) + 사용자 강조 색.
+    // Caller seeds both from the current ThemeManager state before exec()
+    // and reads them back after Accepted.
+    void setThemeMode(int mode);
+    int  themeMode() const noexcept { return m_themeMode; }
     void   setAccentColor(const QColor& color);
     QColor accentColor() const noexcept { return m_accentColor; }
 
@@ -92,7 +93,7 @@ private:
     // 테마 위젯 — 다크/라이트 콤보 + 강조 색 선택 버튼.
     QComboBox*   m_themeCombo{nullptr};
     QPushButton* m_accentButton{nullptr};
-    bool         m_themeIsDark{true};                  // default: 다크
+    int          m_themeMode{0};                       // 0=다크(default) 1=라이트 2=자동
     QColor       m_accentColor{QColor(0x4f, 0x93, 0xff)};
     // Repaint m_accentButton's swatch to reflect m_accentColor.
     void updateAccentSwatch();
