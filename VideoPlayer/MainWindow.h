@@ -97,6 +97,10 @@ private slots:
     void onSeekBack();
     void onSeekForward();
 
+    // ---- Volume (keyboard shortcut) ----
+    void onVolumeUp();
+    void onVolumeDown();
+
     // ---- Thumbnail ----
     void onTakeScreenshot();
     void onImportThumbnail();
@@ -171,6 +175,8 @@ private:
     QAction* m_actStop{nullptr};
     QAction* m_actSeekBack{nullptr};
     QAction* m_actSeekForward{nullptr};
+    QAction* m_actVolumeUp{nullptr};
+    QAction* m_actVolumeDown{nullptr};
     QAction* m_actPrevious{nullptr};
     QAction* m_actNext{nullptr};
     QAction* m_actAddFiles{nullptr};
@@ -205,6 +211,17 @@ private:
     bool                     m_userSeeking{false};
     double                   m_duration{0.0};
     RepeatMode               m_repeatMode{RepeatMode::None};
+
+    // ---- Metadata-pane dirty tracking ----
+    // Flips on when the user edits rating/memo; stays on until they hit
+    // Save OR we auto-flush on a row switch / window close. Without this a
+    // half-typed memo vanishes when focus moves to another video.
+    // m_metaDirtyForId pins the dirty state to the entry being edited so a
+    // late currentChanged signal can't redirect the save to the wrong row.
+    // m_suppressMetaDirty guards the programmatic populate in loadCurrentItem.
+    bool                     m_metaDirty{false};
+    int                      m_metaDirtyForId{0};
+    bool                     m_suppressMetaDirty{false};
 
     // ---- "이어보기" (resume playback) ----
     // m_resumeEnabled — user option (Options dialog). When off, we neither
@@ -253,6 +270,9 @@ private:
 
     // ---- Runtime helpers ----
     void loadCurrentItem(const MediaItem& item);
+    // Auto-flush pending rating/memo edits before the dirty state is
+    // overwritten by a new selection or the window closes. No-op when clean.
+    void flushPendingMetaEdits();
     void updateThumbnailDisplay(const QString& path);
     void refreshPlaylist();
     void playItemAtRow(int row);

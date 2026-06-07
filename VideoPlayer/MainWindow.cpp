@@ -1336,9 +1336,14 @@ QWidget* MainWindow::buildControlsBar()
 
     m_volumeSlider = new QSlider(Qt::Horizontal);
     m_volumeSlider->setRange(0, 100);
+    // Restore the last-used volume rather than resetting on every launch —
+    // matches the persistence of every other playback knob (upscale,
+    // repeat, speed, filters …).
+    m_lastVolume = QSettings().value("playback/volume", 80).toInt();
     m_volumeSlider->setValue(m_lastVolume);
     m_volumeSlider->setFixedWidth(120);
     m_volumeSlider->setFocusPolicy(Qt::NoFocus);
+    m_volumeSlider->setToolTip("볼륨 (Up/Down 키로 ±5)");
     row->addWidget(m_volumeSlider);
 
     row->addStretch();
@@ -1453,6 +1458,25 @@ void MainWindow::setupConnections()
     connect(m_saveButton, &QPushButton::clicked,
             this, &MainWindow::onSaveMetadata);
 
+    // Track rating/memo edits as dirty so flushPendingMetaEdits() can
+    // auto-save them when the user switches rows. m_suppressMetaDirty is
+    // set while loadCurrentItem populates the widgets, otherwise every
+    // selection would immediately look dirty.
+    connect(m_ratingSpinBox, &QSpinBox::valueChanged, this, [this](int) {
+        if (!m_suppressMetaDirty && m_currentItem.has_value())
+        {
+            m_metaDirty      = true;
+            m_metaDirtyForId = m_currentItem->id;
+        }
+    });
+    connect(m_memoEdit, &QTextEdit::textChanged, this, [this]() {
+        if (!m_suppressMetaDirty && m_currentItem.has_value())
+        {
+            m_metaDirty      = true;
+            m_metaDirtyForId = m_currentItem->id;
+        }
+    });
+
     // ---- Transport ----
     connect(m_prevButton,      &QPushButton::clicked,
             this, &MainWindow::onPlayPrevious);
@@ -1470,8 +1494,12 @@ void MainWindow::setupConnections()
             this, &MainWindow::onSeekSliderReleased);
 
     // ---- Volume ----
-    connect(m_volumeSlider, &QSlider::valueChanged,
-            m_mpvWidget, &MpvPlayerWidget::setVolume);
+    // One signal feeds both mpv (live audible change) and QSettings (so the
+    // next launch restores the level).
+    connect(m_volumeSlider, &QSlider::valueChanged, this, [this](int v) {
+        m_mpvWidget->setVolume(v);
+        QSettings().setValue("playback/volume", v);
+    });
 
     // Reflect the level on the mute-button icon (off / down / up).
     connect(m_volumeSlider, &QSlider::valueChanged, this, [this](int v) {
@@ -1766,16 +1794,35 @@ void MainWindow::onRemoveSelected()
     if (rows.isEmpty())
         return;
 
-    QList<int> idsToRemove;
+    QList<int>  idsToRemove;
+    QStringList titlesPreview;
     idsToRemove.reserve(rows.size());
     for (const QModelIndex& idx : rows)
     {
         auto item = m_playlistModel->itemAt(idx.row());
-        if (item.has_value())
-            idsToRemove.append(item->id);
+        if (!item.has_value())
+            continue;
+        idsToRemove.append(item->id);
+        if (titlesPreview.size() < 5)        // first 5 only — keep dialog compact
+            titlesPreview.append(item->title);
     }
 
     if (idsToRemove.isEmpty())
+        return;
+
+    // Confirmation — removal hits the DB immediately with no undo, so a
+    // misclick on Delete / the "－" button would wipe entries silently.
+    QString detail = titlesPreview.join('\n');
+    if (idsToRemove.size() > titlesPreview.size())
+        detail += QString("\n… 외 %1개").arg(idsToRemove.size() - titlesPreview.size());
+
+    const auto ans = QMessageBox::question(
+        this, "삭제 확인",
+        QString("선택한 %1개 항목을 플레이리스트에서 삭제할까요?\n\n%2\n\n"
+                "(영상 파일 자체는 삭제되지 않습니다.)")
+            .arg(idsToRemove.size()).arg(detail),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (ans != QMessageBox::Yes)
         return;
 
     // If the currently-playing item is about to disappear, stop mpv
@@ -1825,6 +1872,11 @@ void MainWindow::onPlaylistItemSelected(const QModelIndex& current,
     if (!optItem.has_value())
         return;
 
+    // Auto-save any pending rating/memo edits for the PREVIOUS selection
+    // before the widgets get overwritten — otherwise a half-typed memo
+    // vanishes the moment the user clicks another row.
+    flushPendingMetaEdits();
+
     m_currentItem = optItem;
     loadCurrentItem(*m_currentItem);
 }
@@ -1862,6 +1914,10 @@ void MainWindow::onSaveMetadata()
     m_currentItem->memo   = memo;
 
     m_playlistModel->updateItem(*m_currentItem);
+
+    // Explicit save clears the dirty flag so the auto-flush on the next
+    // row switch / close doesn't redundantly re-write the same values.
+    m_metaDirty = false;
 }
 
 // ============================================================
@@ -1918,6 +1974,16 @@ void MainWindow::createActions()
         "seekForward", "앞으로 이동 (5초)",
         QKeySequence(Qt::Key_Right),
         &MainWindow::onSeekForward);
+
+    m_actVolumeUp = make(
+        "volumeUp", "볼륨 +5",
+        QKeySequence(Qt::Key_Up),
+        &MainWindow::onVolumeUp);
+
+    m_actVolumeDown = make(
+        "volumeDown", "볼륨 -5",
+        QKeySequence(Qt::Key_Down),
+        &MainWindow::onVolumeDown);
 
     m_actPrevious = make(
         "previous", "이전 트랙",
@@ -2051,6 +2117,9 @@ void MainWindow::setupMenuBar()
     playMenu->addAction(m_actFrameBackStep);
     playMenu->addAction(m_actFrameStep);
     playMenu->addSeparator();
+    playMenu->addAction(m_actVolumeUp);
+    playMenu->addAction(m_actVolumeDown);
+    playMenu->addSeparator();
     playMenu->addAction(m_actSpeedDown);
     playMenu->addAction(m_actSpeedUp);
     playMenu->addSeparator();
@@ -2128,6 +2197,19 @@ void MainWindow::onSeekForward()
 {
     if (m_mpvWidget && m_currentItem.has_value())
         m_mpvWidget->seekRelative(+5.0);
+}
+
+void MainWindow::onVolumeUp()
+{
+    // Route through the slider — its valueChanged already drives mpv +
+    // QSettings persistence + the mute icon, and the thumb tracks the
+    // keyboard adjustment for free.
+    m_volumeSlider->setValue(qBound(0, m_volumeSlider->value() + 5, 100));
+}
+
+void MainWindow::onVolumeDown()
+{
+    m_volumeSlider->setValue(qBound(0, m_volumeSlider->value() - 5, 100));
 }
 
 // ============================================================
@@ -2932,12 +3014,50 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
 
 void MainWindow::loadCurrentItem(const MediaItem& item)
 {
-    // Populate rating / memo fields
+    // Populate rating / memo fields. m_suppressMetaDirty stops the
+    // valueChanged / textChanged signals these setters fire from marking
+    // the freshly-loaded entry dirty — dirty should mean "the human typed
+    // something", not "we refreshed the widgets from disk".
+    m_suppressMetaDirty = true;
     m_ratingSpinBox->setValue(item.rating);
     m_memoEdit->setPlainText(item.memo);
+    m_suppressMetaDirty = false;
+
+    m_metaDirty      = false;
+    m_metaDirtyForId = item.id;
 
     // Show the index-sheet thumbnail
     updateThumbnailDisplay(item.thumbnailPath);
+}
+
+void MainWindow::flushPendingMetaEdits()
+{
+    if (!m_metaDirty || m_metaDirtyForId == 0)
+        return;
+
+    // Persist against the id the edits were made FOR, not whatever
+    // m_currentItem happens to be now (flush usually runs mid-selection-
+    // change).
+    const int     rating = m_ratingSpinBox->value();
+    const QString memo   = m_memoEdit->toPlainText();
+    const int     id     = m_metaDirtyForId;
+
+    (void)m_db.updateRating(id, rating);
+    (void)m_db.updateMemo  (id, memo);
+
+    if (m_currentItem.has_value() && m_currentItem->id == id)
+    {
+        m_currentItem->rating = rating;
+        m_currentItem->memo   = memo;
+        m_playlistModel->updateItem(*m_currentItem);
+    }
+    else if (auto opt = m_db.getMediaById(id); opt.has_value())
+    {
+        m_playlistModel->updateItem(*opt);
+    }
+
+    m_metaDirty = false;
+    statusBar()->showMessage("평점 / 메모가 자동 저장되었습니다", 2500);
 }
 
 void MainWindow::updateThumbnailDisplay(const QString& path)
@@ -3178,6 +3298,11 @@ void MainWindow::resizeEvent(QResizeEvent* e)
 
 void MainWindow::closeEvent(QCloseEvent* e)
 {
+    // Last-chance metadata flush — covers "typed a memo, hit X without
+    // saving or switching rows". The auto-flush in onPlaylistItemSelected
+    // only fires on selection changes.
+    flushPendingMetaEdits();
+
     // "이어보기": persist the currently-playing item's position so the next
     // launch can resume it. Done here (rather than only on track switches)
     // because quitting mid-playback is the common case.
