@@ -111,6 +111,9 @@ private slots:
 
 protected:
     void resizeEvent(QResizeEvent* e) override;
+    // Persist the currently-playing item's resume position on shutdown
+    // ("이어보기") before the window (and mpv) tears down.
+    void closeEvent(QCloseEvent* e) override;
 
 private:
     // ---- Core components (owned by this window) ----
@@ -198,6 +201,16 @@ private:
     double                   m_duration{0.0};
     RepeatMode               m_repeatMode{RepeatMode::None};
 
+    // ---- "이어보기" (resume playback) ----
+    // m_resumeEnabled — user option (Options dialog). When off, we neither
+    //   restore nor (effectively) act on saved positions.
+    // m_pendingResumePos — position to seek to once the file is actually
+    //   loaded. Set in playItemAtRow when a meaningful resume point exists;
+    //   consumed (and cleared) by the fileLoaded handler. Seeking right
+    //   after loadFile() is too early — mpv hasn't opened the file yet.
+    bool                     m_resumeEnabled{true};
+    double                   m_pendingResumePos{0.0};
+
     // ---- A-B repeat (transient — never persisted) ----
     // When both are set and B > A, onPositionChanged loops playback back
     // to A whenever the position runs past B (or jumps before A).
@@ -223,6 +236,12 @@ private:
     void updateThumbnailDisplay(const QString& path);
     void refreshPlaylist();
     void playItemAtRow(int row);
+
+    // "이어보기": persist the OUTGOING playing item's position before we
+    // switch away from it (or shut down). Saves only when the position is
+    // sane (> 0 and strictly before the end) to avoid clobbering a good
+    // resume point with a 0 or an at-the-very-end value.
+    void saveCurrentResumePos();
 
     [[nodiscard]] int     currentPlaylistRow() const;
     // Row of the item actually playing (m_currentItem) in the current

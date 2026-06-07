@@ -10,6 +10,7 @@ class QTableWidget;
 class QTabWidget;
 class QSlider;
 class QLabel;
+class QCheckBox;
 
 // ============================================================
 // OptionsDialog
@@ -46,6 +47,11 @@ public:
     void   setNisSharpness(double value);
     double nisSharpness() const noexcept { return m_nisSharpness; }
 
+    // "이어보기" — resume each video from its last position. Caller seeds
+    // the initial state before exec() and reads it back after Accepted.
+    void setResumeEnabled(bool enabled);
+    bool resumeEnabled() const noexcept { return m_resumeEnabled; }
+
 private slots:
     void onAccepted();
     void onResetDefaults();
@@ -60,6 +66,9 @@ private:
     QSlider* m_nisSharpnessSlider{nullptr};
     QLabel*  m_nisSharpnessValueLabel{nullptr};
     double   m_nisSharpness{0.5};
+
+    QCheckBox* m_resumeCheck{nullptr};
+    bool       m_resumeEnabled{true};   // default: enabled
 
     void buildShortcutTab();
     void buildGeneralTab();

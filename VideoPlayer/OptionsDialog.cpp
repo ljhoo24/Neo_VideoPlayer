@@ -11,6 +11,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QSlider>
+#include <QCheckBox>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QDialogButtonBox>
@@ -204,6 +205,27 @@ void OptionsDialog::buildGeneralTab()
     upForm->addRow(hint);
 
     vl->addWidget(upGroup);
+
+    // ---- 재생 그룹 ----
+    auto* playGroup = new QGroupBox("재생", page);
+    auto* playForm  = new QVBoxLayout(playGroup);
+    playForm->setContentsMargins(10, 12, 10, 12);
+    playForm->setSpacing(8);
+
+    // "이어보기" — when enabled, each video resumes from where it was last
+    // left off. Live state is mirrored into m_resumeEnabled so the OK
+    // handler can read it without re-querying the widget.
+    m_resumeCheck = new QCheckBox(
+        "이어보기 (마지막 위치에서 이어서 재생)", playGroup);
+    m_resumeCheck->setToolTip(
+        "켜면 각 영상을 이전에 멈춘 위치에서 다시 재생합니다.\n"
+        "끄면 항상 처음부터 재생합니다.");
+    m_resumeCheck->setChecked(m_resumeEnabled);
+    connect(m_resumeCheck, &QCheckBox::toggled,
+            this, [this](bool on) { m_resumeEnabled = on; });
+    playForm->addWidget(m_resumeCheck);
+
+    vl->addWidget(playGroup);
     vl->addStretch(1);
 
     m_tabs->addTab(page, "일반");
@@ -219,6 +241,13 @@ void OptionsDialog::setNisSharpness(double value)
         m_nisSharpnessSlider->setValue(
             static_cast<int>(m_nisSharpness * 100.0 + 0.5));
     }
+}
+
+void OptionsDialog::setResumeEnabled(bool enabled)
+{
+    m_resumeEnabled = enabled;
+    if (m_resumeCheck)
+        m_resumeCheck->setChecked(enabled);   // toggled() keeps the flag in sync
 }
 
 // ============================================================

@@ -50,6 +50,7 @@
 #include <QProxyStyle>
 #include <QStyleOptionSlider>
 #include <QResizeEvent>
+#include <QCloseEvent>
 #include <QDialog>
 #include <QKeyEvent>
 #include <QEventLoop>
@@ -882,6 +883,10 @@ MainWindow::MainWindow(QWidget* parent)
             s.value("playback/nisSharpness", 0.5).toDouble();
         m_mpvWidget->setNisSharpness(savedSharp);
 
+        // "이어보기" option — default enabled.
+        m_resumeEnabled =
+            s.value("playback/resumeEnabled", true).toBool();
+
         // Restore the upscale mode. setCurrentIndex fires
         // currentIndexChanged, which is wired to setUpscaleMode +
         // QSettings persistence — so the mpv side picks up the value
@@ -1477,6 +1482,18 @@ void MainWindow::setupConnections()
     connect(m_mpvWidget, &MpvPlayerWidget::fileEnded,
             this, &MainWindow::onFileEnded);
 
+    // "이어보기": once mpv has actually opened the file, seek to the
+    // pending resume position (set in playItemAtRow). Seeking earlier —
+    // right after loadFile() — is a no-op because the file isn't open yet.
+    connect(m_mpvWidget, &MpvPlayerWidget::fileLoaded,
+            this, [this](const QString&) {
+                if (m_pendingResumePos > 0.0)
+                {
+                    m_mpvWidget->seek(m_pendingResumePos);
+                    m_pendingResumePos = 0.0;
+                }
+            });
+
     // ---- Mouse gestures over the video ----
     // Wheel → volume. Drive the slider (not setVolume directly): the
     // slider's valueChanged is already wired to mpv volume *and* the
@@ -2062,6 +2079,9 @@ void MainWindow::onOptionsTriggered()
     // slider shows the user's last choice rather than the default.
     dlg.setNisSharpness(m_mpvWidget->nisSharpness());
 
+    // Seed the "이어보기" checkbox from the current option state.
+    dlg.setResumeEnabled(m_resumeEnabled);
+
     if (dlg.exec() == QDialog::Accepted)
     {
         // Dialog has already applied the new shortcuts to the QActions.
@@ -2075,6 +2095,10 @@ void MainWindow::onOptionsTriggered()
         const double sharp = dlg.nisSharpness();
         m_mpvWidget->setNisSharpness(sharp);
         QSettings().setValue("playback/nisSharpness", sharp);
+
+        // "이어보기" option — apply to live state and persist.
+        m_resumeEnabled = dlg.resumeEnabled();
+        QSettings().setValue("playback/resumeEnabled", m_resumeEnabled);
 
         statusBar()->showMessage("옵션이 저장되었습니다", 4000);
     }
@@ -2401,6 +2425,21 @@ void MainWindow::onPauseStateChanged(bool paused)
 
 void MainWindow::onFileEnded()
 {
+    // "이어보기": a fully-watched video should start over next time, not
+    // resume at the very end. Reset its saved position to 0 BEFORE any
+    // branch below (RepeatMode::One re-loads the same file, and the
+    // advance branches go through playItemAtRow which would otherwise read
+    // a stale value). Clear the in-memory copies too.
+    if (m_playingItem.has_value() && m_db.isInitialized())
+    {
+        (void)m_db.setResumePos(m_playingItem->id, 0.0);
+        m_playingItem->resumePos = 0.0;
+        if (m_currentItem.has_value()
+            && m_currentItem->id == m_playingItem->id)
+            m_currentItem->resumePos = 0.0;
+    }
+    m_pendingResumePos = 0.0;
+
     switch (m_repeatMode)
     {
     case RepeatMode::One:
@@ -2777,15 +2816,85 @@ void MainWindow::refreshPlaylist()
     m_playlistModel->loadFromDatabase(m_db);
 }
 
+// "이어보기": persist the position of whatever is currently playing.
+// Called just before we switch away (playItemAtRow / openExternalFile) and
+// on shutdown. Guarded so we never overwrite a good saved point with 0 or
+// an at-the-very-end value.
+void MainWindow::saveCurrentResumePos()
+{
+    if (!m_playingItem.has_value() || !m_db.isInitialized())
+        return;
+
+    const double pos = m_mpvWidget->position();
+    const double dur = m_mpvWidget->duration();
+
+    // Sane = past the start and not within the last few seconds of the
+    // file (mirrors the "meaningful" restore test, so anything we store is
+    // worth resuming to). When duration is unknown (0) accept any positive
+    // position.
+    const bool sane = pos > 0.0 && (dur <= 0.0 || pos <= dur - 5.0);
+    if (!sane)
+        return;
+
+    (void)m_db.setResumePos(m_playingItem->id, pos);
+
+    // Keep the in-memory optionals in sync so a re-play of the same entry
+    // (e.g. double-clicking the row again) resumes immediately. We do NOT
+    // touch the model here: resume_pos isn't displayed, and updateItem
+    // resets the model — which would clobber the current index right when
+    // callers like onFileEnded's "전체 반복" branch depend on it. The DB is
+    // the source of truth and re-loads on the next refresh.
+    m_playingItem->resumePos = pos;
+    if (m_currentItem.has_value() && m_currentItem->id == m_playingItem->id)
+        m_currentItem->resumePos = pos;
+}
+
 void MainWindow::playItemAtRow(int row)
 {
     auto optItem = m_playlistModel->itemAt(row);
     if (!optItem.has_value())
         return;
 
+    // Was this same entry the one just playing? (Re-watch of the current
+    // row — e.g. a double-click — where the model's resume_pos is stale.)
+    const bool replayingSame =
+        m_playingItem.has_value() && m_playingItem->id == optItem->id;
+
+    // Save the OUTGOING file's position before we replace it.
+    saveCurrentResumePos();
+
+    // The model's cached resume_pos can be stale (it isn't refreshed on
+    // every save). Pull the authoritative value straight from the DB so a
+    // resume works even without an intervening playlist reload.
+    if (m_db.isInitialized())
+        if (auto fresh = m_db.getMediaById(optItem->id); fresh.has_value())
+            optItem->resumePos = fresh->resumePos;
+
+    // If we just saved the outgoing position for this very entry, that
+    // freshly-saved value is the one to resume from.
+    if (replayingSame && m_playingItem.has_value())
+        optItem->resumePos = m_playingItem->resumePos;
+
     m_currentItem = optItem;
     m_playingItem = optItem;   // this row is now the playback queue anchor
     loadCurrentItem(*m_currentItem);
+
+    // Arm a resume seek (applied once fileLoaded fires) when the option is
+    // on and the saved position is "meaningful": at least a few seconds in
+    // and not basically-finished. Otherwise start from the beginning.
+    m_pendingResumePos = 0.0;
+    if (m_resumeEnabled)
+    {
+        // Duration is unknown until the file loads, so "meaningful" here
+        // collapses to "at least a few seconds in" (the not-near-the-end
+        // check already happened when we SAVED — we never store a position
+        // within 5s of the end). We never store an at-the-end position
+        // (onFileEnded resets to 0), so this is sufficient.
+        const double rp = m_currentItem->resumePos;
+        if (rp >= 5.0)
+            m_pendingResumePos = rp;
+    }
+
     m_mpvWidget->loadFile(m_currentItem->filePath);
 
     // Remember this as the "last played" entry so the next launch can
@@ -2815,6 +2924,12 @@ void MainWindow::openExternalFile(const QString& path)
     }
 
     qDebug() << "[OpenFile] external open request:" << abs;
+
+    // "이어보기": persist the position of whatever is currently playing
+    // before we switch to the externally-opened file. The DB path below
+    // ends in playItemAtRow (which also saves), but doing it here too
+    // covers the direct-loadFile fallback at the end.
+    saveCurrentResumePos();
 
     if (m_db.isInitialized())
     {
@@ -2912,4 +3027,13 @@ void MainWindow::resizeEvent(QResizeEvent* e)
     QMainWindow::resizeEvent(e);
     if (isFullScreen())
         positionFsControlsBar();
+}
+
+void MainWindow::closeEvent(QCloseEvent* e)
+{
+    // "이어보기": persist the currently-playing item's position so the next
+    // launch can resume it. Done here (rather than only on track switches)
+    // because quitting mid-playback is the common case.
+    saveCurrentResumePos();
+    QMainWindow::closeEvent(e);
 }

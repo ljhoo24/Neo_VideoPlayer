@@ -47,6 +47,12 @@ bool DatabaseManager::initialize(const QString& dbPath)
     pragmaQuery.exec("PRAGMA journal_mode=WAL");
 
     m_initialized = createTables();
+
+    // Bring older databases (created before newer columns existed) up to
+    // date. Must run after createTables() and is safe to run every launch.
+    if (m_initialized)
+        migrateSchema();
+
     return m_initialized;
 }
 
@@ -64,7 +70,8 @@ bool DatabaseManager::createTables()
                                CHECK(rating >= 0 AND rating <= 100),
             memo           TEXT    NOT NULL DEFAULT '',
             date_added     TEXT    NOT NULL
-                               DEFAULT (datetime('now', 'localtime'))
+                               DEFAULT (datetime('now', 'localtime')),
+            resume_pos     REAL    NOT NULL DEFAULT 0
         )
     )SQL");
 
@@ -72,6 +79,43 @@ bool DatabaseManager::createTables()
         qWarning() << "[DB] createTables failed:" << q.lastError().text();
 
     return ok;
+}
+
+void DatabaseManager::migrateSchema()
+{
+    // "이어보기" resume position. Existing users already have a media_files
+    // table without this column, so add it on demand. We probe the live
+    // schema via PRAGMA table_info rather than blindly running ALTER (which
+    // would error on the second launch once the column exists).
+    QSqlQuery info(m_db);
+    if (!info.exec("PRAGMA table_info(media_files)"))
+    {
+        qWarning() << "[DB] migrateSchema: table_info failed:"
+                   << info.lastError().text();
+        return;
+    }
+
+    bool hasResumePos = false;
+    while (info.next())
+    {
+        // column 1 of table_info is the column name
+        if (info.value(1).toString() == QLatin1String("resume_pos"))
+        {
+            hasResumePos = true;
+            break;
+        }
+    }
+
+    if (!hasResumePos)
+    {
+        QSqlQuery alter(m_db);
+        if (!alter.exec("ALTER TABLE media_files "
+                        "ADD COLUMN resume_pos REAL NOT NULL DEFAULT 0"))
+            qWarning() << "[DB] migrateSchema: add resume_pos failed:"
+                       << alter.lastError().text();
+        else
+            qDebug() << "[DB] migrateSchema: added resume_pos column";
+    }
 }
 
 // ============================================================
@@ -154,6 +198,24 @@ bool DatabaseManager::updateMemo(int id, const QString& memo)
     return true;
 }
 
+bool DatabaseManager::setResumePos(int id, double seconds)
+{
+    if (!m_initialized)
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE media_files SET resume_pos = :p WHERE id = :id");
+    q.bindValue(":p",  seconds);
+    q.bindValue(":id", id);
+
+    if (!q.exec())
+    {
+        qWarning() << "[DB] setResumePos failed:" << q.lastError().text();
+        return false;
+    }
+    return true;
+}
+
 bool DatabaseManager::updateThumbnail(int id, const QString& thumbnailPath)
 {
     if (!m_initialized)
@@ -223,6 +285,7 @@ MediaItem DatabaseManager::rowToItem(const QSqlQuery& q) const
         .rating        = q.value("rating").toInt(),
         .memo          = q.value("memo").toString(),
         .dateAdded     = q.value("date_added").toString(),
+        .resumePos     = q.value("resume_pos").toDouble(),
     };
 }
 

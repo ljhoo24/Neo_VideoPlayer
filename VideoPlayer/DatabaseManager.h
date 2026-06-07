@@ -18,6 +18,7 @@ struct MediaItem
     int     rating{0};
     QString memo;
     QString dateAdded;
+    double  resumePos{0.0};   // last playback position in seconds ("이어보기")
 };
 
 // ============================================================
@@ -45,6 +46,7 @@ public:
                                     const QString& thumbnailPath = QLatin1String(""));
     [[nodiscard]] bool updateRating(int id, int rating);
     [[nodiscard]] bool updateMemo(int id, const QString& memo);
+    [[nodiscard]] bool setResumePos(int id, double seconds);
     [[nodiscard]] bool updateThumbnail(int id, const QString& thumbnailPath);
     [[nodiscard]] bool removeMediaFile(int id);
 
@@ -65,5 +67,8 @@ private:
     bool         m_initialized{false};
 
     [[nodiscard]] bool      createTables();
+    // Idempotent schema upgrade for DBs created before a column existed.
+    // Runs on every launch right after createTables(); a no-op once applied.
+    void                    migrateSchema();
     [[nodiscard]] MediaItem rowToItem(const class QSqlQuery& q) const;
 };
