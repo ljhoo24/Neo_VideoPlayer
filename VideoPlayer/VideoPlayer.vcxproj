@@ -80,7 +80,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <PreprocessorDefinitions>_DEBUG;_WINDOWS;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)generated;$(Qt6Inc);$(Qt6Inc)\QtCore;$(Qt6Inc)\QtGui;$(Qt6Inc)\QtWidgets;$(Qt6Inc)\QtSql;$(MpvInc);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)generated;$(Qt6Inc);$(Qt6Inc)\QtCore;$(Qt6Inc)\QtGui;$(Qt6Inc)\QtWidgets;$(Qt6Inc)\QtSql;$(Qt6Inc)\QtNetwork;$(MpvInc);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <!-- /Zc:__cplusplus : Qt checks this macro to verify C++17+ compliance  -->
       <!-- /permissive-    : strict standard conformance (also needed by Qt)    -->
@@ -92,7 +92,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(Qt6Lib);$(MpvRoot);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <!-- Qt6EntryPointd.lib provides WinMain which calls the standard main()  -->
-      <AdditionalDependencies>Qt6Widgetsd.lib;Qt6Sqld.lib;Qt6Guid.lib;Qt6Cored.lib;Qt6EntryPointd.lib;mpv.lib;opengl32.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Qt6Widgetsd.lib;Qt6Sqld.lib;Qt6Networkd.lib;Qt6Guid.lib;Qt6Cored.lib;Qt6EntryPointd.lib;mpv.lib;opengl32.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
       <Command>IF NOT EXIST "$(OutDir)" mkdir "$(OutDir)"
@@ -115,7 +115,7 @@ copy /Y "$(ProjectDir)shaders\NVScaler.glsl" "$(OutDir)shaders\"
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <PreprocessorDefinitions>NDEBUG;_WINDOWS;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)generated;$(Qt6Inc);$(Qt6Inc)\QtCore;$(Qt6Inc)\QtGui;$(Qt6Inc)\QtWidgets;$(Qt6Inc)\QtSql;$(MpvInc);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)generated;$(Qt6Inc);$(Qt6Inc)\QtCore;$(Qt6Inc)\QtGui;$(Qt6Inc)\QtWidgets;$(Qt6Inc)\QtSql;$(Qt6Inc)\QtNetwork;$(MpvInc);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <AdditionalOptions>/Zc:__cplusplus /permissive- /utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -126,7 +126,7 @@ copy /Y "$(ProjectDir)shaders\NVScaler.glsl" "$(OutDir)shaders\"
       <OptimizeReferences>true</OptimizeReferences>
       <AdditionalLibraryDirectories>$(Qt6Lib);$(MpvRoot);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <!-- Qt6EntryPoint.lib provides WinMain which calls the standard main()  -->
-      <AdditionalDependencies>Qt6Widgets.lib;Qt6Sql.lib;Qt6Gui.lib;Qt6Core.lib;Qt6EntryPoint.lib;mpv.lib;opengl32.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>Qt6Widgets.lib;Qt6Sql.lib;Qt6Network.lib;Qt6Gui.lib;Qt6Core.lib;Qt6EntryPoint.lib;mpv.lib;opengl32.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
       <Command>IF NOT EXIST "$(OutDir)" mkdir "$(OutDir)"
@@ -150,11 +150,15 @@ copy /Y "$(ProjectDir)shaders\NVScaler.glsl" "$(OutDir)shaders\"
     <ClCompile Include="MpvPlayerWidget.cpp" />
     <ClCompile Include="PlaylistModel.cpp" />
     <ClCompile Include="OptionsDialog.cpp" />
+    <ClCompile Include="IconFont.cpp" />
+    <ClCompile Include="ThemeManager.cpp" />
     <!-- MOC-generated translation units (built by the CustomBuild rules below) -->
     <ClCompile Include="generated\moc_MainWindow.cpp" />
     <ClCompile Include="generated\moc_MpvPlayerWidget.cpp" />
     <ClCompile Include="generated\moc_PlaylistModel.cpp" />
     <ClCompile Include="generated\moc_OptionsDialog.cpp" />
+    <!-- RCC-generated resource (embeds theme.qss + Material Icons font) -->
+    <ClCompile Include="generated\qrc_resources.cpp" />
   </ItemGroup>
   <!-- ================================================================
        Header files
@@ -163,6 +167,16 @@ copy /Y "$(ProjectDir)shaders\NVScaler.glsl" "$(OutDir)shaders\"
        ================================================================ -->
   <ItemGroup>
     <ClInclude Include="DatabaseManager.h" />
+    <!-- Plain headers (no Q_OBJECT → no moc) -->
+    <ClInclude Include="IconFont.h" />
+    <ClInclude Include="ThemeManager.h" />
+    <!-- Qt resource → rcc generates generated\qrc_resources.cpp -->
+    <CustomBuild Include="resources\resources.qrc">
+      <Message>RCC %(Filename).qrc</Message>
+      <Command>"$(Qt6Bin)\rcc.exe" "%(FullPath)" -o "$(ProjectDir)generated\qrc_resources.cpp"</Command>
+      <Outputs>$(ProjectDir)generated\qrc_resources.cpp</Outputs>
+      <AdditionalInputs>%(FullPath);$(ProjectDir)resources\theme.qss;$(ProjectDir)resources\fonts\MaterialIcons-Regular.ttf</AdditionalInputs>
+    </CustomBuild>
     <CustomBuild Include="MainWindow.h">
       <Message>MOC %(Filename).h</Message>
       <Command>"$(Qt6Bin)\moc.exe" "%(FullPath)" -o "$(ProjectDir)generated\moc_%(Filename).cpp"</Command>
