@@ -13,6 +13,7 @@
 #include <QSlider>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QColorDialog>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QDialogButtonBox>
@@ -250,9 +251,76 @@ void OptionsDialog::buildGeneralTab()
     listForm->addRow("표시 방식", m_playlistViewCombo);
 
     vl->addWidget(listGroup);
+
+    // ---- 테마 그룹 ----
+    auto* themeGroup = new QGroupBox("테마", page);
+    auto* themeForm  = new QFormLayout(themeGroup);
+    themeForm->setContentsMargins(10, 12, 10, 12);
+    themeForm->setSpacing(8);
+
+    // 다크/라이트 — index 0 = 다크, index 1 = 라이트, mirrored into
+    // m_themeIsDark so onAccepted / the caller can read it back.
+    m_themeCombo = new QComboBox(themeGroup);
+    m_themeCombo->addItem("다크");      // index 0 → dark = true
+    m_themeCombo->addItem("라이트");    // index 1 → dark = false
+    m_themeCombo->setToolTip(
+        "어두운 테마 또는 밝은 테마를 선택합니다. OK 누르면 즉시 반영됩니다.");
+    m_themeCombo->setCurrentIndex(m_themeIsDark ? 0 : 1);
+    connect(m_themeCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int idx) { m_themeIsDark = (idx == 0); });
+    themeForm->addRow("모드", m_themeCombo);
+
+    // 강조 색 — opens a QColorDialog; the button's background shows the
+    // current choice so the swatch doubles as a preview.
+    m_accentButton = new QPushButton(themeGroup);
+    m_accentButton->setToolTip(
+        "버튼·슬라이더·선택 항목에 쓰이는 강조 색입니다. 클릭하여 변경하세요.");
+    m_accentButton->setFixedSize(64, 26);
+    connect(m_accentButton, &QPushButton::clicked, this, [this] {
+        const QColor picked = QColorDialog::getColor(
+            m_accentColor, this, "강조 색 선택");
+        if (picked.isValid())
+        {
+            m_accentColor = picked;
+            updateAccentSwatch();
+        }
+    });
+    updateAccentSwatch();
+    themeForm->addRow("강조 색", m_accentButton);
+
+    vl->addWidget(themeGroup);
     vl->addStretch(1);
 
     m_tabs->addTab(page, "일반");
+}
+
+// Paint the accent button as a solid swatch of the current colour. A
+// contrasting border keeps a very light/dark swatch visible against the
+// dialog background.
+void OptionsDialog::updateAccentSwatch()
+{
+    if (!m_accentButton)
+        return;
+    m_accentButton->setStyleSheet(
+        QString("QPushButton { background-color: %1; border: 1px solid #808080; "
+                "border-radius: 4px; }")
+            .arg(m_accentColor.name()));
+}
+
+void OptionsDialog::setThemeIsDark(bool dark)
+{
+    m_themeIsDark = dark;
+    if (m_themeCombo)
+        m_themeCombo->setCurrentIndex(dark ? 0 : 1);
+}
+
+void OptionsDialog::setAccentColor(const QColor& color)
+{
+    if (!color.isValid())
+        return;
+    m_accentColor = color;
+    updateAccentSwatch();
 }
 
 void OptionsDialog::setPlaylistGridMode(bool grid)

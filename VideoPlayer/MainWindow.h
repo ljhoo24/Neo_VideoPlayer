@@ -138,6 +138,11 @@ private:
     QPushButton* m_saveButton{nullptr};
     QPushButton* m_importThumbButton{nullptr};
     QPushButton* m_autoThumbButton{nullptr};
+    // Search-row icon buttons — kept as members so refreshIcons() can
+    // recolour them when the theme changes live.
+    QPushButton* m_addButton{nullptr};
+    QPushButton* m_addFolderButton{nullptr};
+    QPushButton* m_removeButton{nullptr};
 
     // ---- Right panel / controls bar widgets ----
     QPushButton* m_prevButton{nullptr};
@@ -239,6 +244,12 @@ private:
     QWidget* buildControlsBar();
     void     updateRepeatButton();
     void     updateABButtons();   // recolour A/B/clear to reflect armed state
+
+    // Re-set the QIcon on every icon button from the current ThemeManager
+    // colours. Called after a live theme/accent change so glyphs recolour
+    // without a restart. Also re-runs the dynamic-icon updaters so the
+    // repeat/A-B/play-pause icons reflect both state AND the new theme.
+    void     refreshIcons();
 
     // ---- Runtime helpers ----
     void loadCurrentItem(const MediaItem& item);

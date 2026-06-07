@@ -3,6 +3,7 @@
 #include "MpvPlayerWidget.h"
 #include "OptionsDialog.h"
 #include "IconFont.h"
+#include "ThemeManager.h"
 
 #include <QApplication>
 #include <QSplitter>
@@ -1036,8 +1037,13 @@ void MainWindow::setupUI()
 // Small helper: a flat, round, icon-only button used in the toolbars.
 static QPushButton* makeIconButton(char16_t glyph, const QString& tip,
                                    int diameter = 36, int iconPx = 20,
-                                   const QColor& color = QColor(0xcf, 0xd3, 0xda))
+                                   QColor color = QColor())
 {
+    // Default (invalid) colour → the theme's normal icon grey. Evaluated
+    // per call so the right colour is used for the active theme; live
+    // theme switches recolour via MainWindow::refreshIcons().
+    if (!color.isValid())
+        color = ThemeManager::iconColor();
     auto* btn = new QPushButton;
     btn->setIcon(Icons::icon(glyph, color, iconPx));
     btn->setIconSize(QSize(iconPx, iconPx));
@@ -1063,22 +1069,22 @@ QWidget* MainWindow::buildLeftPanel()
     m_searchEdit = new QLineEdit;
     m_searchEdit->setPlaceholderText("제목 검색…");
     m_searchEdit->setClearButtonEnabled(true);
-    m_searchEdit->addAction(Icons::icon(Icons::Search, QColor(0x9a, 0xa0, 0xa8), 18),
+    m_searchEdit->addAction(Icons::icon(Icons::Search, ThemeManager::iconMuted(), 18),
                             QLineEdit::LeadingPosition);
     searchRow->addWidget(m_searchEdit);
 
-    auto* addBtn = makeIconButton(Icons::Add, "영상 파일 추가");
-    connect(addBtn, &QPushButton::clicked, this, &MainWindow::onAddFiles);
-    searchRow->addWidget(addBtn);
+    m_addButton = makeIconButton(Icons::Add, "영상 파일 추가");
+    connect(m_addButton, &QPushButton::clicked, this, &MainWindow::onAddFiles);
+    searchRow->addWidget(m_addButton);
 
-    auto* addFolderBtn = makeIconButton(Icons::FolderOpen, "폴더 추가 (하위까지 스캔)");
-    connect(addFolderBtn, &QPushButton::clicked, this, &MainWindow::onAddFolder);
-    searchRow->addWidget(addFolderBtn);
+    m_addFolderButton = makeIconButton(Icons::FolderOpen, "폴더 추가 (하위까지 스캔)");
+    connect(m_addFolderButton, &QPushButton::clicked, this, &MainWindow::onAddFolder);
+    searchRow->addWidget(m_addFolderButton);
 
-    auto* removeBtn = makeIconButton(Icons::Delete, "선택 항목 제거",
-                                     36, 20, QColor(0xe0, 0x8a, 0x8a));
-    connect(removeBtn, &QPushButton::clicked, this, &MainWindow::onRemoveSelected);
-    searchRow->addWidget(removeBtn);
+    m_removeButton = makeIconButton(Icons::Delete, "선택 항목 제거",
+                                    36, 20, ThemeManager::danger());
+    connect(m_removeButton, &QPushButton::clicked, this, &MainWindow::onRemoveSelected);
+    searchRow->addWidget(m_removeButton);
 
     layout->addLayout(searchRow);
 
@@ -1159,12 +1165,12 @@ QWidget* MainWindow::buildLeftPanel()
     thumbBtnRow->setSpacing(6);
 
     m_importThumbButton = new QPushButton("  이미지 가져오기");
-    m_importThumbButton->setIcon(Icons::icon(Icons::Image, QColor(0xcf, 0xd3, 0xda), 18));
+    m_importThumbButton->setIcon(Icons::icon(Icons::Image, ThemeManager::iconColor(), 18));
     m_importThumbButton->setToolTip("JPG/PNG 파일을 썸네일로 지정");
     thumbBtnRow->addWidget(m_importThumbButton);
 
     m_autoThumbButton = new QPushButton("  자동 생성");
-    m_autoThumbButton->setIcon(Icons::icon(Icons::AutoFixHigh, QColor(0xcf, 0xd3, 0xda), 18));
+    m_autoThumbButton->setIcon(Icons::icon(Icons::AutoFixHigh, ThemeManager::iconColor(), 18));
     m_autoThumbButton->setToolTip("영상 10% 지점에서 썸네일 자동 캡처");
     thumbBtnRow->addWidget(m_autoThumbButton);
 
@@ -1200,7 +1206,7 @@ QWidget* MainWindow::buildLeftPanel()
 
     m_saveButton = new QPushButton("  저장");
     m_saveButton->setObjectName("AccentButton");
-    m_saveButton->setIcon(Icons::icon(Icons::Save, QColor(0xff, 0xff, 0xff), 18));
+    m_saveButton->setIcon(Icons::icon(Icons::Save, ThemeManager::onAccent(), 18));
     m_saveButton->setToolTip("평점과 메모 저장");
     metaLayout->addWidget(m_saveButton);
 
@@ -1282,7 +1288,7 @@ QWidget* MainWindow::buildRightPanel()
 // ----------------------------------------
 QWidget* MainWindow::buildControlsBar()
 {
-    const QColor kIcon(0xcf, 0xd3, 0xda);   // normal icon colour
+    const QColor kIcon = ThemeManager::iconColor();   // normal icon colour
 
     auto* bar = new QFrame;
     bar->setObjectName("ControlsBar");
@@ -1343,7 +1349,7 @@ QWidget* MainWindow::buildControlsBar()
     m_prevButton      = makeIconButton(Icons::SkipPrevious, "이전", 40, 24, kIcon);
     m_frameBackButton = makeIconButton(Icons::NavigateBefore, "이전 프레임 (,)", 36, 22, kIcon);
     m_playPauseButton = makeIconButton(Icons::PlayArrow,    "재생/일시정지", 46, 28,
-                                       QColor(0xff, 0xff, 0xff));
+                                       ThemeManager::onAccent());
     m_playPauseButton->setObjectName("PrimaryButton");
     m_frameFwdButton  = makeIconButton(Icons::NavigateNext, "다음 프레임 (.)", 36, 22, kIcon);
     m_stopButton      = makeIconButton(Icons::Stop,         "정지", 40, 24, kIcon);
@@ -1469,7 +1475,7 @@ void MainWindow::setupConnections()
 
     // Reflect the level on the mute-button icon (off / down / up).
     connect(m_volumeSlider, &QSlider::valueChanged, this, [this](int v) {
-        const QColor c(0xcf, 0xd3, 0xda);
+        const QColor c = ThemeManager::iconColor();
         const char16_t g = (v == 0)  ? Icons::VolumeOff
                           : (v < 50)  ? Icons::VolumeDown
                                       : Icons::VolumeUp;
@@ -2142,6 +2148,10 @@ void MainWindow::onOptionsTriggered()
     // Seed the playlist view-mode combo from the current mode.
     dlg.setPlaylistGridMode(m_playlistGridMode);
 
+    // Seed the 테마 controls from the current ThemeManager state.
+    dlg.setThemeIsDark(ThemeManager::isDark());
+    dlg.setAccentColor(ThemeManager::accent());
+
     if (dlg.exec() == QDialog::Accepted)
     {
         // Dialog has already applied the new shortcuts to the QActions.
@@ -2165,6 +2175,16 @@ void MainWindow::onOptionsTriggered()
         const bool grid = dlg.playlistGridMode();
         QSettings().setValue("ui/playlistView", grid ? "grid" : "list");
         applyPlaylistViewMode(grid);
+
+        // 테마 — push the chosen mode + accent into ThemeManager (which
+        // persists + re-applies the tokenized stylesheet/palette), then
+        // recolour the code-drawn icons so they match live without a
+        // restart.
+        ThemeManager::setTheme(dlg.themeIsDark()
+                                   ? ThemeManager::Theme::Dark
+                                   : ThemeManager::Theme::Light);
+        ThemeManager::setAccent(dlg.accentColor());
+        refreshIcons();
 
         statusBar()->showMessage("옵션이 저장되었습니다", 4000);
     }
@@ -2257,8 +2277,8 @@ void MainWindow::onRepeatClicked()
 
 void MainWindow::updateRepeatButton()
 {
-    const QColor off(0xcf, 0xd3, 0xda);
-    const QColor on (0x4f, 0x93, 0xff);   // accent — active repeat
+    const QColor off = ThemeManager::iconColor();
+    const QColor on  = ThemeManager::accent();   // accent — active repeat
 
     switch (m_repeatMode)
     {
@@ -2355,13 +2375,74 @@ void MainWindow::onClearAB()
 
 void MainWindow::updateABButtons()
 {
-    const QColor off(0xcf, 0xd3, 0xda);
-    const QColor on (0x4f, 0x93, 0xff);   // accent — point armed
+    const QColor off = ThemeManager::iconColor();
+    const QColor on  = ThemeManager::accent();   // accent — point armed
 
     m_abAButton->setIcon(
         Icons::icon(Icons::Flag, m_pointA.has_value() ? on : off, 20));
     m_abBButton->setIcon(
         Icons::icon(Icons::Flag, m_pointB.has_value() ? on : off, 20));
+}
+
+// ============================================================
+// Re-colour every code-drawn icon from the current theme.
+//
+//   Called after a live theme/accent change (OptionsDialog → OK). The
+//   stylesheet itself is re-applied by ThemeManager; this handles the
+//   QIcons we render in code, which the stylesheet can't touch. Buttons
+//   with a fixed semantic colour (accent fills, danger) use the matching
+//   ThemeManager accessor so they stay correct on both themes. The
+//   dynamic-state icons (volume level, repeat, A-B, play/pause) are
+//   re-rendered through their existing updaters so they reflect BOTH the
+//   live state and the new theme.
+// ============================================================
+void MainWindow::refreshIcons()
+{
+    const QColor normal = ThemeManager::iconColor();
+
+    // Search edit's leading search glyph — clear + re-add the action.
+    if (m_searchEdit)
+    {
+        const auto acts = m_searchEdit->actions();
+        for (QAction* a : acts)
+            m_searchEdit->removeAction(a);
+        m_searchEdit->addAction(
+            Icons::icon(Icons::Search, ThemeManager::iconMuted(), 18),
+            QLineEdit::LeadingPosition);
+    }
+
+    // ---- Static transport / toolbar icons ----
+    if (m_addButton)        m_addButton->setIcon(Icons::icon(Icons::Add, normal, 20));
+    if (m_addFolderButton)  m_addFolderButton->setIcon(Icons::icon(Icons::FolderOpen, normal, 20));
+    if (m_removeButton)     m_removeButton->setIcon(Icons::icon(Icons::Delete, ThemeManager::danger(), 20));
+
+    if (m_importThumbButton) m_importThumbButton->setIcon(Icons::icon(Icons::Image, normal, 18));
+    if (m_autoThumbButton)   m_autoThumbButton->setIcon(Icons::icon(Icons::AutoFixHigh, normal, 18));
+    if (m_saveButton)        m_saveButton->setIcon(Icons::icon(Icons::Save, ThemeManager::onAccent(), 18));
+
+    if (m_prevButton)       m_prevButton->setIcon(Icons::icon(Icons::SkipPrevious, normal, 24));
+    if (m_frameBackButton)  m_frameBackButton->setIcon(Icons::icon(Icons::NavigateBefore, normal, 22));
+    if (m_frameFwdButton)   m_frameFwdButton->setIcon(Icons::icon(Icons::NavigateNext, normal, 22));
+    if (m_stopButton)       m_stopButton->setIcon(Icons::icon(Icons::Stop, normal, 24));
+    if (m_nextButton)       m_nextButton->setIcon(Icons::icon(Icons::SkipNext, normal, 24));
+    if (m_abClearButton)    m_abClearButton->setIcon(Icons::icon(Icons::Remove, normal, 20));
+    if (m_screenshotButton) m_screenshotButton->setIcon(Icons::icon(Icons::PhotoCamera, normal, 22));
+
+    // ---- Volume icon — depends on the current level ----
+    if (m_volumeButton && m_volumeSlider)
+    {
+        const int v = m_volumeSlider->value();
+        const char16_t g = (v == 0) ? Icons::VolumeOff
+                         : (v < 50) ? Icons::VolumeDown
+                                    : Icons::VolumeUp;
+        m_volumeButton->setIcon(Icons::icon(g, normal, 18));
+    }
+
+    // ---- Dynamic-state icons — re-render via their updaters ----
+    updateRepeatButton();
+    updateABButtons();
+    if (m_mpvWidget)
+        onPauseStateChanged(m_mpvWidget->isPaused());
 }
 
 // ============================================================
@@ -2486,7 +2567,7 @@ void MainWindow::onPauseStateChanged(bool paused)
 {
     m_playPauseButton->setIcon(
         Icons::icon(paused ? Icons::PlayArrow : Icons::Pause,
-                    QColor(0xff, 0xff, 0xff), 28));
+                    ThemeManager::onAccent(), 28));
 }
 
 void MainWindow::onFileEnded()

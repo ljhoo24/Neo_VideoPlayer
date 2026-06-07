@@ -3,6 +3,7 @@
 #include <QDialog>
 #include <QKeySequence>
 #include <QList>
+#include <QColor>
 
 // Forward-declare Qt classes we only use by pointer
 class QAction;
@@ -12,6 +13,7 @@ class QSlider;
 class QLabel;
 class QCheckBox;
 class QComboBox;
+class QPushButton;
 
 // ============================================================
 // OptionsDialog
@@ -58,6 +60,14 @@ public:
     void setPlaylistGridMode(bool grid);
     bool playlistGridMode() const noexcept { return m_playlistGridMode; }
 
+    // ---- 테마 ----
+    // 다크/라이트 선택 + 사용자 강조 색. Caller seeds both from the current
+    // ThemeManager state before exec() and reads them back after Accepted.
+    void   setThemeIsDark(bool dark);
+    bool   themeIsDark() const noexcept { return m_themeIsDark; }
+    void   setAccentColor(const QColor& color);
+    QColor accentColor() const noexcept { return m_accentColor; }
+
 private slots:
     void onAccepted();
     void onResetDefaults();
@@ -78,6 +88,14 @@ private:
 
     QComboBox* m_playlistViewCombo{nullptr};
     bool       m_playlistGridMode{false};   // default: 리스트
+
+    // 테마 위젯 — 다크/라이트 콤보 + 강조 색 선택 버튼.
+    QComboBox*   m_themeCombo{nullptr};
+    QPushButton* m_accentButton{nullptr};
+    bool         m_themeIsDark{true};                  // default: 다크
+    QColor       m_accentColor{QColor(0x4f, 0x93, 0xff)};
+    // Repaint m_accentButton's swatch to reflect m_accentColor.
+    void updateAccentSwatch();
 
     void buildShortcutTab();
     void buildGeneralTab();

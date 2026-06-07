@@ -17,6 +17,7 @@
 
 #include "MainWindow.h"
 #include "IconFont.h"
+#include "ThemeManager.h"
 
 // ============================================================
 // File-based message handler — captures qDebug/qWarning/qCritical
@@ -49,35 +50,6 @@ static void fileMessageHandler(QtMsgType type,
 
     out << ts << " [" << level << "] " << msg << "\n";
     out.flush();
-}
-
-// ============================================================
-// Dark Fusion palette — applied globally before the window opens
-// ============================================================
-static void applyDarkPalette(QApplication& app)
-{
-    app.setStyle(QStyleFactory::create("Fusion"));
-
-    QPalette p;
-    p.setColor(QPalette::Window,          QColor(42,  42,  42));
-    p.setColor(QPalette::WindowText,      QColor(220, 220, 220));
-    p.setColor(QPalette::Base,            QColor(28,  28,  28));
-    p.setColor(QPalette::AlternateBase,   QColor(48,  48,  48));
-    p.setColor(QPalette::ToolTipBase,     QColor(42,  42,  42));
-    p.setColor(QPalette::ToolTipText,     QColor(220, 220, 220));
-    p.setColor(QPalette::Text,            QColor(220, 220, 220));
-    p.setColor(QPalette::Button,          QColor(58,  58,  58));
-    p.setColor(QPalette::ButtonText,      QColor(220, 220, 220));
-    p.setColor(QPalette::BrightText,      Qt::red);
-    p.setColor(QPalette::Highlight,       QColor(42,  130, 218));
-    p.setColor(QPalette::HighlightedText, Qt::black);
-    p.setColor(QPalette::Link,            QColor(42,  130, 218));
-
-    // Disabled colours — slightly dimmer
-    p.setColor(QPalette::Disabled, QPalette::Text,       QColor(120, 120, 120));
-    p.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(120, 120, 120));
-
-    app.setPalette(p);
 }
 
 // ============================================================
@@ -139,17 +111,12 @@ int main(int argc, char* argv[])
         }
     }
 
-    applyDarkPalette(app);
-
-    // ---- Load embedded icon font + apply the modern dark stylesheet ----
+    // ---- Load embedded icon font, then load + apply the active theme.
+    //      ThemeManager substitutes the chosen palette + accent into the
+    //      tokenized :/theme.qss template and sets a matching QPalette. ----
     Icons::loadFont();
-    {
-        QFile qss(QStringLiteral(":/theme.qss"));
-        if (qss.open(QIODevice::ReadOnly | QIODevice::Text))
-            app.setStyleSheet(QString::fromUtf8(qss.readAll()));
-        else
-            qWarning() << "[Theme] could not load :/theme.qss";
-    }
+    ThemeManager::load();
+    ThemeManager::apply(app);
 
     try
     {

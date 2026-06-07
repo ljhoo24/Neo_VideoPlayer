@@ -79,6 +79,7 @@ set(SOURCES
     VideoPlayer/PlaylistModel.cpp
     VideoPlayer/OptionsDialog.cpp
     VideoPlayer/IconFont.cpp
+    VideoPlayer/ThemeManager.cpp
     VideoPlayer/resources/resources.qrc
 )
 
@@ -93,6 +94,7 @@ set(HEADERS
     VideoPlayer/PlaylistModel.h
     VideoPlayer/OptionsDialog.h
     VideoPlayer/IconFont.h
+    VideoPlayer/ThemeManager.h
 )
 
 # WIN32 subsystem = no console window in release builds
