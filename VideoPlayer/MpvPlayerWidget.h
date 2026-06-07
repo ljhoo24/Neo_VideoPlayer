@@ -108,6 +108,28 @@ public:
     [[nodiscard]] double zoom()        const noexcept { return m_zoom; }
     [[nodiscard]] bool   deinterlace() const noexcept { return m_deinterlace; }
 
+    // ---- Audio processing ----
+    // Loudness normalization + a simple bass/treble/preamp boost, all
+    // realised through mpv's global "af" (audio-filter) property. The
+    // pieces are composed into one ffmpeg-style filter chain by
+    // rebuildAudioChain(); each setter updates the cached state and
+    // rebuilds. Gains are in dB, clamped to -12..+12 (0 = flat/no-op,
+    // so a 0 piece is simply omitted from the chain). resetAudio()
+    // restores every audio knob to its default and clears the chain.
+    //
+    // "af" is a GLOBAL mpv property (it persists across loadfile), so
+    // applying on change is sufficient — no per-file re-apply needed.
+    void setAudioNormalize(bool on);
+    void setBassGain(int dB);     // -12..+12
+    void setTrebleGain(int dB);   // -12..+12
+    void setPreampGain(int dB);   // -12..+12  ("부스트")
+    void resetAudio();
+
+    [[nodiscard]] bool audioNormalize() const noexcept { return m_audioNormalize; }
+    [[nodiscard]] int  bassGain()       const noexcept { return m_bassGain; }
+    [[nodiscard]] int  trebleGain()     const noexcept { return m_trebleGain; }
+    [[nodiscard]] int  preampGain()     const noexcept { return m_preampGain; }
+
     void takeScreenshot(const QString& outputPath);
 
     // ---- State queries ----
@@ -175,10 +197,19 @@ private:
     double      m_panY{0.0};            // "video-pan-y", -1..1
     bool        m_deinterlace{false};   // "deinterlace"
 
+    // ---- Audio processing state (composed into the "af" chain) ----
+    bool        m_audioNormalize{false};   // dynaudnorm loudness normalize
+    int         m_bassGain{0};             // dB, -12..+12 (0 = flat)
+    int         m_trebleGain{0};           // dB, -12..+12 (0 = flat)
+    int         m_preampGain{0};           // dB, -12..+12 (0 = flat) "부스트"
+
     bool        m_initialized{false};
 
     void observeProperties();
     void applyUpscalingProfile();
+    // Compose the single "af" chain string from the enabled audio pieces
+    // and push it to mpv. Empty chain → clears "af".
+    void rebuildAudioChain();
     void registerMouseBindings();
     void handleMpvEvent(mpv_event* event);
 

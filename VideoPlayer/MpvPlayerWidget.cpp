@@ -7,6 +7,7 @@
 #include <QCoreApplication>
 #include <QStandardPaths>
 #include <QRegularExpression>
+#include <QStringList>
 #include <QWheelEvent>
 #include <QMouseEvent>
 #include <QDebug>
@@ -350,6 +351,93 @@ void MpvPlayerWidget::resetVideoAdjustments()
     setZoom(0.0);
     setPan(0.0, 0.0);
     setDeinterlace(false);
+}
+
+// ============================================================
+// Feature: audio processing (normalize + bass/treble/preamp boost)
+//
+// Everything is funnelled through mpv's "af" property — a single
+// ffmpeg-style audio-filter chain string. We compose that string from
+// the enabled pieces in rebuildAudioChain() and set it whole, so each
+// change replaces the chain rather than stacking filters.
+//
+// Filter syntax: ffmpeg filters are wrapped in mpv's `lavfi=[...]`
+// form, which is the well-supported way to reach libavfilter from
+// mpv's af chain. Multiple filters are joined with ',' into one value.
+// Only non-default (non-zero / enabled) pieces are included; an empty
+// result clears "af" entirely.
+//
+// "af" is GLOBAL in mpv (persists across loadfile), so applying on
+// change is enough — no per-file re-apply required.
+// ============================================================
+
+void MpvPlayerWidget::setAudioNormalize(bool on)
+{
+    m_audioNormalize = on;
+    rebuildAudioChain();
+}
+
+void MpvPlayerWidget::setBassGain(int dB)
+{
+    m_bassGain = std::clamp(dB, -12, 12);
+    rebuildAudioChain();
+}
+
+void MpvPlayerWidget::setTrebleGain(int dB)
+{
+    m_trebleGain = std::clamp(dB, -12, 12);
+    rebuildAudioChain();
+}
+
+void MpvPlayerWidget::setPreampGain(int dB)
+{
+    m_preampGain = std::clamp(dB, -12, 12);
+    rebuildAudioChain();
+}
+
+void MpvPlayerWidget::resetAudio()
+{
+    m_audioNormalize = false;
+    m_bassGain       = 0;
+    m_trebleGain     = 0;
+    m_preampGain     = 0;
+    rebuildAudioChain();
+}
+
+void MpvPlayerWidget::rebuildAudioChain()
+{
+    if (!m_mpv)
+        return;
+
+    // Collect each enabled piece as a `lavfi=[...]` segment, then join
+    // them with ',' into one af value. Order: normalize first so the
+    // tone/boost shaping acts on the leveled signal; preamp last so it
+    // sets the final output gain.
+    QStringList pieces;
+
+    if (m_audioNormalize)
+        pieces << "lavfi=[dynaudnorm]";          // realtime loudness normalize
+    if (m_bassGain != 0)
+        pieces << QString("lavfi=[bass=g=%1]").arg(m_bassGain);
+    if (m_trebleGain != 0)
+        pieces << QString("lavfi=[treble=g=%1]").arg(m_trebleGain);
+    if (m_preampGain != 0)
+        pieces << QString("lavfi=[volume=%1dB]").arg(m_preampGain);
+
+    const QString   chain = pieces.join(',');   // empty → clears "af"
+    const QByteArray utf8 = chain.toUtf8();
+
+    const int rc = mpv_set_property_string(m_mpv, "af", utf8.constData());
+    if (rc < 0)
+    {
+        qWarning().nospace()
+            << "[mpv] set af=\"" << utf8.constData()
+            << "\" failed: " << mpv_error_string(rc);
+    }
+    else
+    {
+        qDebug().nospace() << "[mpv] af = \"" << utf8.constData() << "\"";
+    }
 }
 
 // ============================================================

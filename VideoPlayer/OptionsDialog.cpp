@@ -292,6 +292,80 @@ void OptionsDialog::buildGeneralTab()
     themeForm->addRow("강조 색", m_accentButton);
 
     vl->addWidget(themeGroup);
+
+    // ---- 오디오 그룹 ----
+    // 음량 정규화 체크 + 저음/고음/부스트 게인 슬라이더(각 -12..+12 dB, 0 = 평탄).
+    // 모든 값은 m_audio* 멤버에 미러링되어 onAccepted / 호출자가 다시 위젯을
+    // 조회하지 않고 읽을 수 있다. OK 누르면 MainWindow가 mpv "af" 체인에 반영.
+    auto* audioGroup = new QGroupBox("오디오", page);
+    auto* audioForm  = new QFormLayout(audioGroup);
+    audioForm->setContentsMargins(10, 12, 10, 12);
+    audioForm->setSpacing(8);
+
+    m_audioNormalizeCheck = new QCheckBox(
+        "음량 정규화 (라우드니스 자동 평준화)", audioGroup);
+    m_audioNormalizeCheck->setToolTip(
+        "켜면 재생 중 음량을 실시간으로 평준화합니다 (ffmpeg dynaudnorm).\n"
+        "장면별 음량 편차가 큰 영상에서 유용합니다.");
+    m_audioNormalizeCheck->setChecked(m_audioNormalize);
+    connect(m_audioNormalizeCheck, &QCheckBox::toggled,
+            this, [this](bool on) { m_audioNormalize = on; });
+    audioForm->addRow(m_audioNormalizeCheck);
+
+    // 저음/고음/부스트 슬라이더를 같은 패턴으로 만든다. 슬라이더는 dB 값을
+    // 그대로(-12..+12) 들고, 옆 라벨에 "+N dB" 형식으로 표시한다. valueChanged
+    // 람다가 대응되는 m_*Gain 멤버와 라벨을 함께 갱신한다.
+    auto makeGainRow =
+        [this, audioGroup, audioForm](const QString& label,
+                                      QSlider*& slider,
+                                      QLabel*&  valueLabel,
+                                      int&      mirror)
+    {
+        slider = new QSlider(Qt::Horizontal, audioGroup);
+        slider->setRange(-12, 12);
+        slider->setSingleStep(1);
+        slider->setPageStep(3);
+        slider->setTickPosition(QSlider::TicksBelow);
+        slider->setTickInterval(3);
+
+        valueLabel = new QLabel(audioGroup);
+        valueLabel->setMinimumWidth(48);
+        valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+        int* mirrorPtr      = &mirror;
+        QLabel* labelPtr    = valueLabel;
+        auto formatDb = [](int v) {
+            return QString("%1%2 dB")
+                .arg(v > 0 ? "+" : "")   // 음수는 자체 부호, 양수만 '+' 추가
+                .arg(v);
+        };
+        connect(slider, &QSlider::valueChanged, this,
+                [mirrorPtr, labelPtr, formatDb](int v) {
+                    *mirrorPtr = v;
+                    labelPtr->setText(formatDb(v));
+                });
+
+        slider->setValue(mirror);          // seed from current mirror
+        valueLabel->setText(formatDb(mirror));
+
+        auto* rowL = new QHBoxLayout;
+        rowL->setSpacing(8);
+        rowL->addWidget(slider, 1);
+        rowL->addWidget(valueLabel);
+        audioForm->addRow(label, rowL);
+    };
+
+    makeGainRow("저음",   m_bassSlider,   m_bassValueLabel,   m_bassGain);
+    makeGainRow("고음",   m_trebleSlider, m_trebleValueLabel, m_trebleGain);
+    makeGainRow("부스트", m_preampSlider, m_preampValueLabel, m_preampGain);
+
+    auto* audioHint = new QLabel(
+        "* 각 게인은 -12 ~ +12 dB, 0 = 평탄. OK 누르면 즉시 반영됩니다.",
+        audioGroup);
+    audioHint->setStyleSheet("color: gray;");
+    audioForm->addRow(audioHint);
+
+    vl->addWidget(audioGroup);
     vl->addStretch(1);
 
     m_tabs->addTab(page, "일반");
@@ -349,6 +423,39 @@ void OptionsDialog::setResumeEnabled(bool enabled)
     m_resumeEnabled = enabled;
     if (m_resumeCheck)
         m_resumeCheck->setChecked(enabled);   // toggled() keeps the flag in sync
+}
+
+// ---- 오디오 ----
+// 각 setter는 미러 멤버를 갱신하고, 위젯이 이미 만들어졌으면 위젯도 맞춘다.
+// 슬라이더 setValue / 체크 setChecked 는 대응 valueChanged/toggled 람다를
+// 호출하므로 미러와 라벨이 함께 동기화된다.
+
+void OptionsDialog::setAudioNormalize(bool on)
+{
+    m_audioNormalize = on;
+    if (m_audioNormalizeCheck)
+        m_audioNormalizeCheck->setChecked(on);
+}
+
+void OptionsDialog::setBassGain(int dB)
+{
+    m_bassGain = std::clamp(dB, -12, 12);
+    if (m_bassSlider)
+        m_bassSlider->setValue(m_bassGain);
+}
+
+void OptionsDialog::setTrebleGain(int dB)
+{
+    m_trebleGain = std::clamp(dB, -12, 12);
+    if (m_trebleSlider)
+        m_trebleSlider->setValue(m_trebleGain);
+}
+
+void OptionsDialog::setPreampGain(int dB)
+{
+    m_preampGain = std::clamp(dB, -12, 12);
+    if (m_preampSlider)
+        m_preampSlider->setValue(m_preampGain);
 }
 
 // ============================================================

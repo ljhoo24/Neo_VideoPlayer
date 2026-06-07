@@ -895,6 +895,15 @@ MainWindow::MainWindow(QWidget* parent)
         m_resumeEnabled =
             s.value("playback/resumeEnabled", true).toBool();
 
+        // 오디오 — restore the processing knobs and push them into the
+        // mpv widget. "af" is a global mpv property so applying once here
+        // (after m_mpvWidget exists) is enough; it persists across files.
+        m_mpvWidget->setBassGain(s.value("audio/bass", 0).toInt());
+        m_mpvWidget->setTrebleGain(s.value("audio/treble", 0).toInt());
+        m_mpvWidget->setPreampGain(s.value("audio/preamp", 0).toInt());
+        m_mpvWidget->setAudioNormalize(
+            s.value("audio/normalize", false).toBool());
+
         // Restore the upscale mode. setCurrentIndex fires
         // currentIndexChanged, which is wired to setUpscaleMode +
         // QSettings persistence — so the mpv side picks up the value
@@ -2373,6 +2382,12 @@ void MainWindow::onOptionsTriggered()
     // Seed the playlist view-mode combo from the current mode.
     dlg.setPlaylistGridMode(m_playlistGridMode);
 
+    // Seed the 오디오 controls from the live mpv-widget state.
+    dlg.setAudioNormalize(m_mpvWidget->audioNormalize());
+    dlg.setBassGain(m_mpvWidget->bassGain());
+    dlg.setTrebleGain(m_mpvWidget->trebleGain());
+    dlg.setPreampGain(m_mpvWidget->preampGain());
+
     // Seed the 테마 controls from the current ThemeManager state.
     // Combo order: 0 = Dark, 1 = Light, 2 = Auto.
     dlg.setThemeMode(ThemeManager::theme() == ThemeManager::Theme::Light ? 1
@@ -2403,6 +2418,26 @@ void MainWindow::onOptionsTriggered()
         const bool grid = dlg.playlistGridMode();
         QSettings().setValue("ui/playlistView", grid ? "grid" : "list");
         applyPlaylistViewMode(grid);
+
+        // 오디오 — push into the mpv widget (rebuilds the "af" chain) and
+        // persist each knob so it survives restart.
+        {
+            QSettings s;
+            const bool normalize = dlg.audioNormalize();
+            const int  bass      = dlg.bassGain();
+            const int  treble    = dlg.trebleGain();
+            const int  preamp    = dlg.preampGain();
+
+            m_mpvWidget->setAudioNormalize(normalize);
+            m_mpvWidget->setBassGain(bass);
+            m_mpvWidget->setTrebleGain(treble);
+            m_mpvWidget->setPreampGain(preamp);
+
+            s.setValue("audio/normalize", normalize);
+            s.setValue("audio/bass",      bass);
+            s.setValue("audio/treble",    treble);
+            s.setValue("audio/preamp",    preamp);
+        }
 
         // 테마 — push the chosen mode + accent into ThemeManager (which
         // persists + re-applies the tokenized stylesheet/palette), then

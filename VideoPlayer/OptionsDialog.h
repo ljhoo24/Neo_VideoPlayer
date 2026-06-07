@@ -69,6 +69,19 @@ public:
     void   setAccentColor(const QColor& color);
     QColor accentColor() const noexcept { return m_accentColor; }
 
+    // ---- 오디오 ----
+    // 음량 정규화 (loudness normalize) + 저음/고음/부스트 게인(dB, -12..+12).
+    // Caller seeds these from live state / QSettings before exec() and
+    // reads them back after Accepted.
+    void setAudioNormalize(bool on);
+    bool audioNormalize() const noexcept { return m_audioNormalize; }
+    void setBassGain(int dB);
+    int  bassGain() const noexcept { return m_bassGain; }
+    void setTrebleGain(int dB);
+    int  trebleGain() const noexcept { return m_trebleGain; }
+    void setPreampGain(int dB);
+    int  preampGain() const noexcept { return m_preampGain; }
+
 private slots:
     void onAccepted();
     void onResetDefaults();
@@ -97,6 +110,19 @@ private:
     QColor       m_accentColor{QColor(0x4f, 0x93, 0xff)};
     // Repaint m_accentButton's swatch to reflect m_accentColor.
     void updateAccentSwatch();
+
+    // 오디오 위젯 — 음량 정규화 체크 + 저음/고음/부스트 슬라이더(각 dB 값 라벨 동반).
+    QCheckBox* m_audioNormalizeCheck{nullptr};
+    bool       m_audioNormalize{false};
+    QSlider*   m_bassSlider{nullptr};
+    QLabel*    m_bassValueLabel{nullptr};
+    int        m_bassGain{0};
+    QSlider*   m_trebleSlider{nullptr};
+    QLabel*    m_trebleValueLabel{nullptr};
+    int        m_trebleGain{0};
+    QSlider*   m_preampSlider{nullptr};
+    QLabel*    m_preampValueLabel{nullptr};
+    int        m_preampGain{0};
 
     void buildShortcutTab();
     void buildGeneralTab();
