@@ -236,6 +236,40 @@ void MpvPlayerWidget::setVolume(int volume)
 }
 
 // ============================================================
+// Playback speed / frame stepping
+// ============================================================
+
+void MpvPlayerWidget::setSpeed(double speed)
+{
+    // Clamp to mpv's sane audio-pitch-correctable range. We cache the
+    // value so speed() can report it without a property round-trip —
+    // mpv keeps "speed" global across loadfile, so the cache stays valid.
+    m_speed = std::clamp(speed, 0.25, 4.0);
+    if (!m_mpv)
+        return;
+    mpv_set_property(m_mpv, "speed", MPV_FORMAT_DOUBLE, &m_speed);
+}
+
+void MpvPlayerWidget::frameStep()
+{
+    if (!m_mpv)
+        return;
+    // Advances exactly one frame and pauses (mpv built-in semantics).
+    const char* args[] = { "frame-step", nullptr };
+    mpv_command(m_mpv, args);
+}
+
+void MpvPlayerWidget::frameBackStep()
+{
+    if (!m_mpv)
+        return;
+    // Steps one frame backward and pauses. Slower than forward stepping
+    // (mpv re-decodes from the preceding keyframe) but accurate.
+    const char* args[] = { "frame-back-step", nullptr };
+    mpv_command(m_mpv, args);
+}
+
+// ============================================================
 // Feature: three-step rendering profile (UpscaleMode)
 //
 //  Off       — bilinear everywhere, no post-processing (fast)

@@ -33,6 +33,20 @@ public:
     void seekRelative(double seconds);    // + forward / - backward
     void setVolume(int volume);     // 0-100
 
+    // ---- Playback speed ----
+    // 0.5 .. 2.0 typically; 1.0 = normal. Maps directly to mpv's "speed"
+    // property. setSpeed is a no-op-safe wrapper; speed() reads back the
+    // last value we cached (mpv keeps "speed" globally across files).
+    void   setSpeed(double speed);
+    [[nodiscard]] double speed() const noexcept { return m_speed; }
+
+    // ---- Frame stepping ----
+    // mpv's frame-step / frame-back-step advance exactly one frame and
+    // leave playback paused — the canonical way to inspect a clip frame
+    // by frame.
+    void frameStep();
+    void frameBackStep();
+
     // ---- Feature toggles ----
     //
     // UpscaleMode — three-step rendering profile that the UI cycles
@@ -122,6 +136,7 @@ private:
     double      m_position{0.0};
     UpscaleMode m_upscaleMode{UpscaleMode::Off};
     double      m_nisSharpness{0.5};   // 0.0..1.0, NIS shader SHARPNESS
+    double      m_speed{1.0};           // playback speed (mpv "speed" property)
     bool        m_initialized{false};
 
     void observeProperties();

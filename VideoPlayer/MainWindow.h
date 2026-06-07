@@ -69,6 +69,20 @@ private slots:
     // ---- Repeat ----
     void onRepeatClicked();
 
+    // ---- Playback speed ----
+    void onSpeedChanged(int comboIndex);   // speed combo selection
+    void onSpeedUp();                       // shortcut: next faster step
+    void onSpeedDown();                     // shortcut: next slower step
+
+    // ---- A-B repeat ----
+    void onSetPointA();   // mark loop start at current position
+    void onSetPointB();   // mark loop end   at current position
+    void onClearAB();     // clear both points
+
+    // ---- Frame stepping ----
+    void onFrameStep();       // one frame forward (pauses)
+    void onFrameBackStep();   // one frame backward (pauses)
+
     // ---- MPV event handlers ----
     void onPositionChanged(double seconds);
     void onDurationChanged(double seconds);
@@ -135,6 +149,12 @@ private:
     QComboBox*   m_upscaleCombo{nullptr};
     QPushButton* m_screenshotButton{nullptr};
     QPushButton* m_repeatButton{nullptr};
+    QComboBox*   m_speedCombo{nullptr};
+    QPushButton* m_abAButton{nullptr};
+    QPushButton* m_abBButton{nullptr};
+    QPushButton* m_abClearButton{nullptr};
+    QPushButton* m_frameBackButton{nullptr};
+    QPushButton* m_frameFwdButton{nullptr};
 
     // ---- QActions (own their shortcuts — registered in createActions) ----
     // Every action customisable from the Options dialog must be kept in
@@ -151,6 +171,13 @@ private:
     QAction* m_actSaveMeta{nullptr};
     QAction* m_actScreenshot{nullptr};
     QAction* m_actToggleRepeat{nullptr};
+    QAction* m_actSpeedUp{nullptr};
+    QAction* m_actSpeedDown{nullptr};
+    QAction* m_actSetPointA{nullptr};
+    QAction* m_actSetPointB{nullptr};
+    QAction* m_actClearAB{nullptr};
+    QAction* m_actFrameStep{nullptr};
+    QAction* m_actFrameBackStep{nullptr};
     QAction* m_actToggleFullscreen{nullptr};
     QAction* m_actExitFullscreen{nullptr};
     QAction* m_actOptions{nullptr};
@@ -171,6 +198,12 @@ private:
     double                   m_duration{0.0};
     RepeatMode               m_repeatMode{RepeatMode::None};
 
+    // ---- A-B repeat (transient — never persisted) ----
+    // When both are set and B > A, onPositionChanged loops playback back
+    // to A whenever the position runs past B (or jumps before A).
+    std::optional<double>    m_pointA;
+    std::optional<double>    m_pointB;
+
     // ---- Setup helpers ----
     void     setupDatabase();
     void     setupUI();
@@ -183,6 +216,7 @@ private:
     QWidget* buildRightPanel();
     QWidget* buildControlsBar();
     void     updateRepeatButton();
+    void     updateABButtons();   // recolour A/B/clear to reflect armed state
 
     // ---- Runtime helpers ----
     void loadCurrentItem(const MediaItem& item);

@@ -38,6 +38,10 @@ inline constexpr char16_t Star         = 0xe838;
 inline constexpr char16_t Tune         = 0xe429;
 inline constexpr char16_t Hd           = 0xe052;
 inline constexpr char16_t Fullscreen   = 0xe5d0;
+inline constexpr char16_t Speed        = 0xe9e4;   // speedometer (speed control)
+inline constexpr char16_t Flag         = 0xe153;   // A-B marker
+inline constexpr char16_t NavigateNext = 0xe408;   // frame step forward
+inline constexpr char16_t NavigateBefore = 0xe409; // frame step backward
 
 // Load the embedded font once at startup. Returns the resolved family
 // name (empty on failure). Safe to call multiple times.

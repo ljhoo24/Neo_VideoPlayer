@@ -60,6 +60,7 @@
 #include <QFontMetrics>
 #include <QPointF>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <functional>
@@ -797,6 +798,31 @@ static QString findIndexSheetFor(const QString& videoPath)
     return {};
 }
 
+// ----------------------------------------
+// Playback-speed steps
+//   Single source of truth shared between the speed combo (index →
+//   value) and the +/- shortcuts (step through the list). Index 2 ==
+//   1.0× is the neutral default.
+// ----------------------------------------
+static constexpr std::array<double, 7> kSpeedSteps = {
+    0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0
+};
+static constexpr int kSpeedDefaultIndex = 2;   // 1.0×
+
+// Nearest speed-step index for an arbitrary speed value (used when
+// restoring a persisted speed that may not land exactly on a step).
+static int nearestSpeedIndex(double speed)
+{
+    int    best     = kSpeedDefaultIndex;
+    double bestDist = 1e9;
+    for (int i = 0; i < static_cast<int>(kSpeedSteps.size()); ++i)
+    {
+        const double d = std::abs(kSpeedSteps[i] - speed);
+        if (d < bestDist) { bestDist = d; best = i; }
+    }
+    return best;
+}
+
 // ============================================================
 // Constructor
 // ============================================================
@@ -866,6 +892,18 @@ MainWindow::MainWindow(QWidget* parent)
             s.value("playback/upscaleMode", 0).toInt();
         if (savedMode > 0 && savedMode < m_upscaleCombo->count())
             m_upscaleCombo->setCurrentIndex(savedMode);
+
+        // Restore playback speed. Snap the stored value to the nearest
+        // combo step; setCurrentIndex fires onSpeedChanged which applies
+        // it to mpv. Only re-set when it differs from the 1.0× default to
+        // avoid a redundant no-op signal at startup.
+        const double savedSpeed =
+            s.value("playback/speed", 1.0).toDouble();
+        const int    speedIdx = nearestSpeedIndex(savedSpeed);
+        if (speedIdx != kSpeedDefaultIndex)
+            m_speedCombo->setCurrentIndex(speedIdx);
+        else
+            m_mpvWidget->setSpeed(kSpeedSteps[kSpeedDefaultIndex]);
     }
 
     refreshPlaylist();
@@ -1238,14 +1276,19 @@ QWidget* MainWindow::buildControlsBar()
     row->addStretch();
 
     // Center group: transport. Play is the primary, oversized button.
+    // Frame-step buttons flank the transport cluster (back-step on the
+    // left, forward-step on the right) — they read as "fine seek".
     m_prevButton      = makeIconButton(Icons::SkipPrevious, "이전", 40, 24, kIcon);
+    m_frameBackButton = makeIconButton(Icons::NavigateBefore, "이전 프레임 (,)", 36, 22, kIcon);
     m_playPauseButton = makeIconButton(Icons::PlayArrow,    "재생/일시정지", 46, 28,
                                        QColor(0xff, 0xff, 0xff));
     m_playPauseButton->setObjectName("PrimaryButton");
+    m_frameFwdButton  = makeIconButton(Icons::NavigateNext, "다음 프레임 (.)", 36, 22, kIcon);
     m_stopButton      = makeIconButton(Icons::Stop,         "정지", 40, 24, kIcon);
     m_nextButton      = makeIconButton(Icons::SkipNext,     "다음", 40, 24, kIcon);
 
-    for (auto* btn : { m_prevButton, m_playPauseButton, m_stopButton, m_nextButton })
+    for (auto* btn : { m_prevButton, m_frameBackButton, m_playPauseButton,
+                       m_frameFwdButton, m_stopButton, m_nextButton })
     {
         btn->setFocusPolicy(Qt::NoFocus);
         row->addWidget(btn);
@@ -1253,7 +1296,40 @@ QWidget* MainWindow::buildControlsBar()
 
     row->addStretch();
 
-    // Right group: upscale, repeat, screenshot
+    // Right group: speed, A-B repeat, upscale, repeat, screenshot
+
+    // ---- Playback speed ----
+    // Compact combo of the standard speed steps. Index → speed mapping
+    // is fixed by kSpeedSteps below; 1.0× (index 2) is the default.
+    m_speedCombo = new QComboBox;
+    m_speedCombo->addItem("0.5×");
+    m_speedCombo->addItem("0.75×");
+    m_speedCombo->addItem("1.0×");
+    m_speedCombo->addItem("1.25×");
+    m_speedCombo->addItem("1.5×");
+    m_speedCombo->addItem("1.75×");
+    m_speedCombo->addItem("2.0×");
+    m_speedCombo->setCurrentIndex(2);   // 1.0× default
+    m_speedCombo->setFixedWidth(74);
+    m_speedCombo->setFocusPolicy(Qt::NoFocus);
+    m_speedCombo->setToolTip("재생 속도 (+ / − 로도 조절)");
+    row->addWidget(m_speedCombo);
+
+    // ---- A-B repeat ----
+    // Two small marker buttons + a clear. Armed state is shown by an
+    // accent recolour in updateABButtons().
+    m_abAButton = makeIconButton(Icons::Flag, "구간 시작 A 설정 ([)", 36, 20, kIcon);
+    m_abAButton->setFocusPolicy(Qt::NoFocus);
+    row->addWidget(m_abAButton);
+
+    m_abBButton = makeIconButton(Icons::Flag, "구간 끝 B 설정 (])", 36, 20, kIcon);
+    m_abBButton->setFocusPolicy(Qt::NoFocus);
+    row->addWidget(m_abBButton);
+
+    m_abClearButton = makeIconButton(Icons::Remove, "A-B 구간 해제 (\\)", 36, 20, kIcon);
+    m_abClearButton->setFocusPolicy(Qt::NoFocus);
+    row->addWidget(m_abClearButton);
+
     // Item order MUST match MpvPlayerWidget::UpscaleMode (Off=0,
     // Standard=1, NvidiaNis=2) — currentIndex() is used as the enum value.
     m_upscaleCombo = new QComboBox;
@@ -1365,6 +1441,21 @@ void MainWindow::setupConnections()
     connect(m_repeatButton, &QPushButton::clicked,
             this, &MainWindow::onRepeatClicked);
     updateRepeatButton();   // initialise label
+
+    // ---- Playback speed ----
+    connect(m_speedCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onSpeedChanged);
+
+    // ---- A-B repeat ----
+    connect(m_abAButton,     &QPushButton::clicked, this, &MainWindow::onSetPointA);
+    connect(m_abBButton,     &QPushButton::clicked, this, &MainWindow::onSetPointB);
+    connect(m_abClearButton, &QPushButton::clicked, this, &MainWindow::onClearAB);
+    updateABButtons();      // initialise armed-state visuals
+
+    // ---- Frame stepping ----
+    connect(m_frameBackButton, &QPushButton::clicked, this, &MainWindow::onFrameBackStep);
+    connect(m_frameFwdButton,  &QPushButton::clicked, this, &MainWindow::onFrameStep);
 
     // ---- Thumbnail ----
     connect(m_screenshotButton,    &QPushButton::clicked,
@@ -1763,6 +1854,44 @@ void MainWindow::createActions()
         QKeySequence(Qt::Key_R),
         &MainWindow::onRepeatClicked);
 
+    // ---- Playback speed (+/- step through the speed combo) ----
+    m_actSpeedUp = make(
+        "speedUp", "재생 속도 증가",
+        QKeySequence(Qt::Key_Plus),
+        &MainWindow::onSpeedUp);
+
+    m_actSpeedDown = make(
+        "speedDown", "재생 속도 감소",
+        QKeySequence(Qt::Key_Minus),
+        &MainWindow::onSpeedDown);
+
+    // ---- Frame stepping ('.' forward, ',' back) ----
+    m_actFrameStep = make(
+        "frameStep", "다음 프레임",
+        QKeySequence(Qt::Key_Period),
+        &MainWindow::onFrameStep);
+
+    m_actFrameBackStep = make(
+        "frameBackStep", "이전 프레임",
+        QKeySequence(Qt::Key_Comma),
+        &MainWindow::onFrameBackStep);
+
+    // ---- A-B repeat ('[' set A, ']' set B, '\' clear) ----
+    m_actSetPointA = make(
+        "setPointA", "구간 시작 A 설정",
+        QKeySequence(Qt::Key_BracketLeft),
+        &MainWindow::onSetPointA);
+
+    m_actSetPointB = make(
+        "setPointB", "구간 끝 B 설정",
+        QKeySequence(Qt::Key_BracketRight),
+        &MainWindow::onSetPointB);
+
+    m_actClearAB = make(
+        "clearAB", "A-B 구간 해제",
+        QKeySequence(Qt::Key_Backslash),
+        &MainWindow::onClearAB);
+
     m_actToggleFullscreen = make(
         "toggleFullscreen", "전체화면 전환",
         QKeySequence(Qt::Key_Return),
@@ -1839,6 +1968,15 @@ void MainWindow::setupMenuBar()
     playMenu->addSeparator();
     playMenu->addAction(m_actSeekBack);
     playMenu->addAction(m_actSeekForward);
+    playMenu->addAction(m_actFrameBackStep);
+    playMenu->addAction(m_actFrameStep);
+    playMenu->addSeparator();
+    playMenu->addAction(m_actSpeedDown);
+    playMenu->addAction(m_actSpeedUp);
+    playMenu->addSeparator();
+    playMenu->addAction(m_actSetPointA);
+    playMenu->addAction(m_actSetPointB);
+    playMenu->addAction(m_actClearAB);
     playMenu->addSeparator();
     playMenu->addAction(m_actPrevious);
     playMenu->addAction(m_actNext);
@@ -2050,6 +2188,112 @@ void MainWindow::updateRepeatButton()
 }
 
 // ============================================================
+// Slots — playback speed
+// ============================================================
+
+void MainWindow::onSpeedChanged(int comboIndex)
+{
+    if (comboIndex < 0 || comboIndex >= static_cast<int>(kSpeedSteps.size()))
+        return;
+    const double speed = kSpeedSteps[comboIndex];
+    m_mpvWidget->setSpeed(speed);
+    QSettings().setValue("playback/speed", speed);
+    statusBar()->showMessage(
+        QStringLiteral("재생 속도: %1×").arg(speed), 2000);
+}
+
+void MainWindow::onSpeedUp()
+{
+    const int next = std::min(m_speedCombo->currentIndex() + 1,
+                              static_cast<int>(kSpeedSteps.size()) - 1);
+    m_speedCombo->setCurrentIndex(next);   // fires onSpeedChanged
+}
+
+void MainWindow::onSpeedDown()
+{
+    const int prev = std::max(m_speedCombo->currentIndex() - 1, 0);
+    m_speedCombo->setCurrentIndex(prev);   // fires onSpeedChanged
+}
+
+// ============================================================
+// Slots — A-B repeat
+//
+//   Mark A, then B; while both are armed (and B > A by a safe margin)
+//   onPositionChanged loops playback back to A. Points are transient —
+//   cleared on Clear, never persisted across launches.
+// ============================================================
+
+void MainWindow::onSetPointA()
+{
+    if (!m_mpvWidget->hasFile())
+        return;
+    m_pointA = m_mpvWidget->position();
+    // If B is now at/behind A the loop would be degenerate — drop it so
+    // the user re-marks the end after moving A forward.
+    if (m_pointB.has_value() && *m_pointB <= *m_pointA + 0.2)
+        m_pointB.reset();
+    updateABButtons();
+    statusBar()->showMessage(
+        QStringLiteral("구간 시작 A: %1").arg(formatTime(*m_pointA)), 2500);
+}
+
+void MainWindow::onSetPointB()
+{
+    if (!m_mpvWidget->hasFile())
+        return;
+    const double pos = m_mpvWidget->position();
+    // Guard against a too-tight loop (B must lead A by >0.2s).
+    if (m_pointA.has_value() && pos <= *m_pointA + 0.2)
+    {
+        statusBar()->showMessage(
+            "B 지점은 A 지점보다 충분히 뒤여야 합니다 (0.2초 이상)", 3000);
+        return;
+    }
+    m_pointB = pos;
+    updateABButtons();
+    statusBar()->showMessage(
+        QStringLiteral("구간 끝 B: %1").arg(formatTime(*m_pointB)), 2500);
+}
+
+void MainWindow::onClearAB()
+{
+    m_pointA.reset();
+    m_pointB.reset();
+    updateABButtons();
+    statusBar()->showMessage("A-B 구간 해제됨", 2000);
+}
+
+void MainWindow::updateABButtons()
+{
+    const QColor off(0xcf, 0xd3, 0xda);
+    const QColor on (0x4f, 0x93, 0xff);   // accent — point armed
+
+    m_abAButton->setIcon(
+        Icons::icon(Icons::Flag, m_pointA.has_value() ? on : off, 20));
+    m_abBButton->setIcon(
+        Icons::icon(Icons::Flag, m_pointB.has_value() ? on : off, 20));
+}
+
+// ============================================================
+// Slots — frame stepping
+//
+//   Step one frame at a time; mpv pauses automatically. No-op when no
+//   file is loaded so the keys don't misfire on an empty player.
+// ============================================================
+
+void MainWindow::onFrameStep()
+{
+    if (m_mpvWidget->hasFile())
+        m_mpvWidget->frameStep();
+}
+
+void MainWindow::onFrameBackStep()
+{
+    if (m_mpvWidget->hasFile())
+        m_mpvWidget->frameBackStep();
+}
+
+// ============================================================
 // Slots — playback navigation
 // ============================================================
 
@@ -2123,6 +2367,18 @@ void MainWindow::onPlayNext()
 
 void MainWindow::onPositionChanged(double seconds)
 {
+    // A-B repeat: once both endpoints are armed, loop back to A whenever
+    // playback reaches B or somehow lands before A. Done before the
+    // slider update so the handle doesn't visibly overshoot past B.
+    // Skipped while the user is actively dragging the seek slider.
+    if (!m_userSeeking && m_pointA.has_value() && m_pointB.has_value()
+        && *m_pointB > *m_pointA + 0.2
+        && (seconds >= *m_pointB || seconds < *m_pointA))
+    {
+        m_mpvWidget->seek(*m_pointA);
+        return;   // next positionChanged (post-seek) refreshes the UI
+    }
+
     if (!m_userSeeking)
         m_seekSlider->setValue(static_cast<int>(seconds));
 
