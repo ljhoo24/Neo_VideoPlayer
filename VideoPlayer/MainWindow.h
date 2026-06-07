@@ -184,6 +184,12 @@ private:
     void playItemAtRow(int row);
 
     [[nodiscard]] int     currentPlaylistRow() const;
+    // Row of the item actually playing (m_currentItem) in the current
+    // filtered view; falls back to the view's selection when nothing is
+    // playing. Navigation/auto-advance must key off this, NOT the user's
+    // manual selection — otherwise selecting another row mid-playback
+    // makes the next track advance from the wrong place.
+    [[nodiscard]] int     currentPlayingRow() const;
     [[nodiscard]] QString formatTime(double seconds) const;
     void positionFsControlsBar();
 

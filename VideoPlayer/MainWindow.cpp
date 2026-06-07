@@ -2067,7 +2067,7 @@ void MainWindow::onPlayPauseRequested()
 
 void MainWindow::onPlayPrevious()
 {
-    const int row = currentPlaylistRow();
+    const int row = currentPlayingRow();
     if (row > 0)
     {
         m_playlistView->setCurrentIndex(m_playlistModel->index(row - 1));
@@ -2077,7 +2077,7 @@ void MainWindow::onPlayPrevious()
 
 void MainWindow::onPlayNext()
 {
-    const int row  = currentPlaylistRow();
+    const int row  = currentPlayingRow();
     const int last = m_playlistModel->rowCount() - 1;
     if (last < 0)
         return;
@@ -2133,7 +2133,7 @@ void MainWindow::onFileEnded()
 
     case RepeatMode::All:
         {
-            const int row  = currentPlaylistRow();
+            const int row  = currentPlayingRow();
             const int last = m_playlistModel->rowCount() - 1;
             if (last < 0)
                 break;
@@ -2581,6 +2581,19 @@ int MainWindow::currentPlaylistRow() const
 {
     const QModelIndex idx = m_playlistView->currentIndex();
     return idx.isValid() ? idx.row() : -1;
+}
+
+int MainWindow::currentPlayingRow() const
+{
+    // Prefer the row of the item actually playing — its id is stable even
+    // if the user has since highlighted a different row in the list.
+    if (m_currentItem.has_value())
+    {
+        const int row = m_playlistModel->rowForId(m_currentItem->id);
+        if (row >= 0)
+            return row;
+    }
+    return currentPlaylistRow();
 }
 
 QString MainWindow::formatTime(double seconds) const
