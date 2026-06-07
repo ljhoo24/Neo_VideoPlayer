@@ -996,6 +996,7 @@ static QPushButton* makeIconButton(char16_t glyph, const QString& tip,
     btn->setProperty("iconButton", true);
     btn->setCursor(Qt::PointingHandCursor);
     btn->setToolTip(tip);
+    btn->setAccessibleName(tip);   // screen-reader + UI-automation label
     return btn;
 }
 
@@ -1592,10 +1593,15 @@ void MainWindow::onRemoveSelected()
 
     // If the currently-playing item is about to disappear, stop mpv
     // first so it doesn't keep a file handle on a now-deleted entry.
+    if (m_playingItem.has_value()
+        && idsToRemove.contains(m_playingItem->id))
+    {
+        m_mpvWidget->stop();
+        m_playingItem.reset();
+    }
     if (m_currentItem.has_value()
         && idsToRemove.contains(m_currentItem->id))
     {
-        m_mpvWidget->stop();
         m_currentItem.reset();
     }
 
@@ -2126,9 +2132,9 @@ void MainWindow::onFileEnded()
     switch (m_repeatMode)
     {
     case RepeatMode::One:
-        // 현재 파일 처음부터 다시 재생
-        if (m_currentItem.has_value())
-            m_mpvWidget->loadFile(m_currentItem->filePath);
+        // 재생 중이던 파일 처음부터 다시 재생 (선택 항목이 아니라)
+        if (m_playingItem.has_value())
+            m_mpvWidget->loadFile(m_playingItem->filePath);
         break;
 
     case RepeatMode::All:
@@ -2506,6 +2512,7 @@ void MainWindow::playItemAtRow(int row)
         return;
 
     m_currentItem = optItem;
+    m_playingItem = optItem;   // this row is now the playback queue anchor
     loadCurrentItem(*m_currentItem);
     m_mpvWidget->loadFile(m_currentItem->filePath);
 
@@ -2574,6 +2581,7 @@ void MainWindow::openExternalFile(const QString& path)
     // Fallback: DB unavailable, or the entry somehow couldn't be located.
     // Play the file directly so the user still sees their video.
     m_currentItem.reset();
+    m_playingItem.reset();
     m_mpvWidget->loadFile(abs);
 }
 
@@ -2585,11 +2593,11 @@ int MainWindow::currentPlaylistRow() const
 
 int MainWindow::currentPlayingRow() const
 {
-    // Prefer the row of the item actually playing — its id is stable even
-    // if the user has since highlighted a different row in the list.
-    if (m_currentItem.has_value())
+    // Key off the item actually PLAYING (not the selection) so that
+    // highlighting another row mid-playback doesn't redirect the queue.
+    if (m_playingItem.has_value())
     {
-        const int row = m_playlistModel->rowForId(m_currentItem->id);
+        const int row = m_playlistModel->rowForId(m_playingItem->id);
         if (row >= 0)
             return row;
     }

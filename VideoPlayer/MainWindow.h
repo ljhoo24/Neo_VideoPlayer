@@ -159,7 +159,14 @@ private:
     QList<QAction*> m_shortcutActions;   // subset surfaced in Options dialog
 
     // ---- Transient state ----
+    // m_currentItem = the entry SELECTED in the playlist (drives the
+    //   rating/memo/thumbnail panel + metadata edits). Overwritten every
+    //   time the selection changes — even mid-playback.
+    // m_playingItem = the entry actually PLAYING. Set only when playback
+    //   starts; this is what next/previous/auto-advance key off so that
+    //   merely selecting another row does not hijack the play queue.
     std::optional<MediaItem> m_currentItem;
+    std::optional<MediaItem> m_playingItem;
     bool                     m_userSeeking{false};
     double                   m_duration{0.0};
     RepeatMode               m_repeatMode{RepeatMode::None};
