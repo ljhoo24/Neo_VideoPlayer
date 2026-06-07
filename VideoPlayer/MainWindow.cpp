@@ -1596,6 +1596,9 @@ void MainWindow::setupConnections()
                     m_mpvWidget->seek(m_pendingResumePos);
                     m_pendingResumePos = 0.0;
                 }
+                // Re-apply persisted aspect/rotate/deinterlace so the
+                // user's saved choices stick on the freshly-loaded file.
+                applyVideoAdjustments();
             });
 
     // ---- Mouse gestures over the video ----
@@ -2090,6 +2093,65 @@ void MainWindow::createActions()
         QKeySequence(Qt::Key_F9),
         &MainWindow::onTakeScreenshot);
 
+    // ---- Video adjustments ----
+    // Aspect ratio entries live in a QActionGroup built in setupMenuBar()
+    // (they're radio-style menu items, not single-shot shortcuts), so
+    // they're not created here. Rotate / zoom / deinterlace / reset get
+    // shortcuts that avoid the in-use set: Ctrl+R rotate, Ctrl+= zoom in,
+    // Ctrl+- zoom out, Ctrl+0 reset zoom.
+    m_actRotate = make(
+        "videoRotate", "90° 회전",
+        QKeySequence(Qt::CTRL | Qt::Key_R),
+        [this]() { m_mpvWidget->rotateStep();
+                   QSettings().setValue("video/rotate", m_mpvWidget->rotate()); });
+
+    m_actZoomIn = make(
+        "videoZoomIn", "확대",
+        QKeySequence(Qt::CTRL | Qt::Key_Equal),
+        [this]() { m_mpvWidget->zoomIn(); });
+
+    m_actZoomOut = make(
+        "videoZoomOut", "축소",
+        QKeySequence(Qt::CTRL | Qt::Key_Minus),
+        [this]() { m_mpvWidget->zoomOut(); });
+
+    m_actZoomReset = make(
+        "videoZoomReset", "확대/축소 초기화",
+        QKeySequence(Qt::CTRL | Qt::Key_0),
+        [this]() { m_mpvWidget->setZoom(0.0);
+                   m_mpvWidget->setPan(0.0, 0.0); });
+
+    // Deinterlace — checkable toggle; reflected in the menu and persisted.
+    m_actDeinterlace = make(
+        "videoDeinterlace", "디인터레이스",
+        QKeySequence(),                         // no default shortcut
+        [this]() {
+            const bool on = m_actDeinterlace->isChecked();
+            m_mpvWidget->setDeinterlace(on);
+            QSettings().setValue("video/deinterlace", on);
+        });
+    m_actDeinterlace->setCheckable(true);
+
+    m_actResetVideoAdj = make(
+        "videoReset", "영상 조정 초기화",
+        QKeySequence(),                         // no default shortcut
+        [this]() {
+            m_mpvWidget->resetVideoAdjustments();
+            // Reflect the reset back into the menu state + persistence.
+            if (m_aspectGroup)
+            {
+                const auto acts = m_aspectGroup->actions();
+                if (!acts.isEmpty())
+                    acts.first()->setChecked(true);   // first = auto
+            }
+            if (m_actDeinterlace)
+                m_actDeinterlace->setChecked(false);
+            QSettings s;
+            s.setValue("video/aspect", QString{});
+            s.setValue("video/rotate", 0);
+            s.setValue("video/deinterlace", false);
+        });
+
     // ---- Application / dialogs ----
     m_actOptions = make(
         "options", "옵션…",
@@ -2146,12 +2208,80 @@ void MainWindow::setupMenuBar()
     playMenu->addAction(m_actToggleRepeat);
     playMenu->addAction(m_actToggleFullscreen);
 
+    // --- 영상 ---
+    // Video adjustments: aspect override, rotate, zoom/pan, deinterlace.
+    // These are mpv runtime properties independent of the upscale chain.
+    auto* videoMenu = mb->addMenu("영상(&V)");
+
+    // 화면비 — radio-style submenu. Each entry stores its mpv ratio string
+    // in QAction::data(); the empty string means auto. The group is
+    // exclusive so exactly one stays checked.
+    auto* aspectMenu = videoMenu->addMenu("화면비");
+    m_aspectGroup = new QActionGroup(this);
+    m_aspectGroup->setExclusive(true);
+
+    struct AspectEntry { const char* label; const char* ratio; };
+    static const AspectEntry kAspects[] = {
+        { "자동",     ""        },
+        { "16:9",     "16:9"    },
+        { "4:3",      "4:3"     },
+        { "1.85:1",   "1.85:1"  },
+        { "2.35:1",   "2.35:1"  },
+    };
+    const QString savedAspect = QSettings().value("video/aspect").toString();
+    for (const auto& e : kAspects)
+    {
+        auto* a = new QAction(QString::fromUtf8(e.label), this);
+        a->setCheckable(true);
+        a->setData(QString::fromUtf8(e.ratio));
+        m_aspectGroup->addAction(a);
+        aspectMenu->addAction(a);
+        if (QString::fromUtf8(e.ratio) == savedAspect)
+            a->setChecked(true);
+    }
+    // Fall back to "자동" if nothing matched the saved value.
+    if (!m_aspectGroup->checkedAction()
+        && !m_aspectGroup->actions().isEmpty())
+        m_aspectGroup->actions().first()->setChecked(true);
+
+    connect(m_aspectGroup, &QActionGroup::triggered, this,
+            [this](QAction* a) {
+                const QString ratio = a->data().toString();
+                m_mpvWidget->setAspectOverride(ratio);
+                QSettings().setValue("video/aspect", ratio);
+            });
+
+    videoMenu->addAction(m_actRotate);
+    videoMenu->addSeparator();
+    videoMenu->addAction(m_actZoomIn);
+    videoMenu->addAction(m_actZoomOut);
+    videoMenu->addAction(m_actZoomReset);
+    videoMenu->addSeparator();
+    // Reflect the persisted deinterlace state in the checkable menu item.
+    m_actDeinterlace->setChecked(
+        QSettings().value("video/deinterlace", false).toBool());
+    videoMenu->addAction(m_actDeinterlace);
+    videoMenu->addSeparator();
+    videoMenu->addAction(m_actResetVideoAdj);
+
     // --- 도구 ---
     auto* toolsMenu = mb->addMenu("도구(&T)");
     toolsMenu->addAction(m_actSaveMeta);
     toolsMenu->addAction(m_actScreenshot);
     toolsMenu->addSeparator();
     toolsMenu->addAction(m_actOptions);
+}
+
+// ============================================================
+// Re-apply persisted video adjustments after a file loads
+// ============================================================
+
+void MainWindow::applyVideoAdjustments()
+{
+    QSettings s;
+    m_mpvWidget->setAspectOverride(s.value("video/aspect").toString());
+    m_mpvWidget->setRotate(s.value("video/rotate", 0).toInt());
+    m_mpvWidget->setDeinterlace(s.value("video/deinterlace", false).toBool());
 }
 
 // ============================================================

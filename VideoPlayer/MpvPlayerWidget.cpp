@@ -270,6 +270,89 @@ void MpvPlayerWidget::frameBackStep()
 }
 
 // ============================================================
+// Feature: video adjustments
+//
+// Aspect override, rotation, zoom/pan and deinterlace are plain mpv
+// runtime properties — orthogonal to the upscale vf chain, so setting
+// them never disturbs applyUpscalingProfile (and vice versa). The
+// accumulating helpers (zoomIn/Out, rotateStep) keep their running value
+// in members so the menu/shortcuts can nudge from the current state.
+// ============================================================
+
+void MpvPlayerWidget::setAspectOverride(const QString& ratio)
+{
+    if (!m_mpv)
+        return;
+    // mpv wants the literal "-1" for "auto / use container aspect".
+    const QByteArray value =
+        ratio.isEmpty() ? QByteArray("-1") : ratio.toUtf8();
+    mpv_set_property_string(m_mpv, "video-aspect-override", value.constData());
+}
+
+void MpvPlayerWidget::setRotate(int degrees)
+{
+    // Normalise into 0/90/180/270 so the running state stays canonical
+    // even if a caller hands us 360 or a negative.
+    m_rotate = ((degrees % 360) + 360) % 360;
+    if (!m_mpv)
+        return;
+    int64_t rot = m_rotate;
+    mpv_set_property(m_mpv, "video-rotate", MPV_FORMAT_INT64, &rot);
+}
+
+void MpvPlayerWidget::rotateStep()
+{
+    setRotate(m_rotate + 90);   // wraps 270 -> 0 via setRotate's normalise
+}
+
+void MpvPlayerWidget::setZoom(double zoom)
+{
+    // mpv's video-zoom is a log2 factor. Clamp to a sane band so the user
+    // can't zoom into a single pixel or shrink the frame to nothing.
+    m_zoom = std::clamp(zoom, -2.0, 3.0);
+    if (!m_mpv)
+        return;
+    mpv_set_property(m_mpv, "video-zoom", MPV_FORMAT_DOUBLE, &m_zoom);
+}
+
+void MpvPlayerWidget::zoomIn()
+{
+    setZoom(m_zoom + 0.25);   // ~+19% per step on the log2 scale
+}
+
+void MpvPlayerWidget::zoomOut()
+{
+    setZoom(m_zoom - 0.25);
+}
+
+void MpvPlayerWidget::setPan(double x, double y)
+{
+    m_panX = std::clamp(x, -1.0, 1.0);
+    m_panY = std::clamp(y, -1.0, 1.0);
+    if (!m_mpv)
+        return;
+    mpv_set_property(m_mpv, "video-pan-x", MPV_FORMAT_DOUBLE, &m_panX);
+    mpv_set_property(m_mpv, "video-pan-y", MPV_FORMAT_DOUBLE, &m_panY);
+}
+
+void MpvPlayerWidget::setDeinterlace(bool on)
+{
+    m_deinterlace = on;
+    if (!m_mpv)
+        return;
+    mpv_set_property_string(m_mpv, "deinterlace", on ? "yes" : "no");
+}
+
+void MpvPlayerWidget::resetVideoAdjustments()
+{
+    setAspectOverride(QString{});   // auto (-1)
+    setRotate(0);
+    setZoom(0.0);
+    setPan(0.0, 0.0);
+    setDeinterlace(false);
+}
+
+// ============================================================
 // Feature: three-step rendering profile (UpscaleMode)
 //
 //  Off       — bilinear everywhere, no post-processing (fast)

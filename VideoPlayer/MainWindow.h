@@ -19,6 +19,7 @@ class QComboBox;
 class QSplitter;
 class QModelIndex;
 class QAction;
+class QActionGroup;
 class ThumbnailLabel;   // defined file-scope in MainWindow.cpp
 
 // ============================================================
@@ -197,6 +198,19 @@ private:
     QAction* m_actOptions{nullptr};
     QAction* m_actQuit{nullptr};
 
+    // ---- Video adjustment actions ----
+    // Aspect ratio is a QActionGroup of checkable entries (auto / 16:9 /
+    // 4:3 / 1.85:1 / 2.35:1). Rotate cycles +90°, zoom in/out/reset are
+    // transient nudges, deinterlace is a checkable toggle, and reset
+    // restores every adjustment to its default.
+    QActionGroup* m_aspectGroup{nullptr};
+    QAction* m_actRotate{nullptr};
+    QAction* m_actZoomIn{nullptr};
+    QAction* m_actZoomOut{nullptr};
+    QAction* m_actZoomReset{nullptr};
+    QAction* m_actDeinterlace{nullptr};
+    QAction* m_actResetVideoAdj{nullptr};
+
     QList<QAction*> m_shortcutActions;   // subset surfaced in Options dialog
 
     // ---- Transient state ----
@@ -247,6 +261,14 @@ private:
     void     setupMenuBar();
     void     loadShortcuts();
     void     saveShortcuts();
+
+    // Re-apply the persisted video adjustments (aspect / rotate /
+    // deinterlace) to the mpv widget. Called after a file loads, since
+    // mpv keeps these per-instance and a fresh file inherits whatever was
+    // last set — re-applying guarantees the user's saved choice sticks
+    // even if some property got reset during load. Zoom/pan are transient
+    // (reset per file) so they're not touched here.
+    void     applyVideoAdjustments();
     QWidget* buildLeftPanel();
 
     // ---- Playlist view mode (list vs. thumbnail grid) ----

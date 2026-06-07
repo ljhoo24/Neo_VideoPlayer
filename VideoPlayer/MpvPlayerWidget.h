@@ -79,6 +79,35 @@ public:
     void setNisSharpness(double sharpness);
     [[nodiscard]] double nisSharpness() const noexcept { return m_nisSharpness; }
 
+    // ---- Video adjustments ----
+    // These map to standalone mpv runtime properties and are entirely
+    // independent of the upscale vf chain (applyUpscalingProfile),
+    // so the two features never clobber each other.
+    //
+    //   setAspectOverride — "video-aspect-override". An empty QString means
+    //     "auto" (mpv wants the literal "-1"); otherwise pass a ratio
+    //     string mpv understands, e.g. "16:9", "4:3", "1.85:1", "2.35:1".
+    //   setRotate          — "video-rotate" in degrees. mpv normalises to
+    //     0..359; we feed 0/90/180/270. rotateStep() cycles +90.
+    //   setZoom            — "video-zoom", a log2 scale (0 = 100%, 1 = 200%,
+    //     -1 = 50%). zoomIn/zoomOut nudge by a fixed step.
+    //   setPan             — "video-pan-x" / "video-pan-y", each -1..1.
+    //   setDeinterlace     — "deinterlace" ("yes"/"no").
+    //   resetVideoAdjustments — back to defaults (auto/0/100%/centre/off).
+    void setAspectOverride(const QString& ratio);
+    void setRotate(int degrees);
+    void rotateStep();                 // cycle +90° (wraps 270 -> 0)
+    void setZoom(double zoom);
+    void zoomIn();                     // +1 step
+    void zoomOut();                    // -1 step
+    void setPan(double x, double y);
+    void setDeinterlace(bool on);
+    void resetVideoAdjustments();
+
+    [[nodiscard]] int    rotate()      const noexcept { return m_rotate; }
+    [[nodiscard]] double zoom()        const noexcept { return m_zoom; }
+    [[nodiscard]] bool   deinterlace() const noexcept { return m_deinterlace; }
+
     void takeScreenshot(const QString& outputPath);
 
     // ---- State queries ----
@@ -137,6 +166,15 @@ private:
     UpscaleMode m_upscaleMode{UpscaleMode::Off};
     double      m_nisSharpness{0.5};   // 0.0..1.0, NIS shader SHARPNESS
     double      m_speed{1.0};           // playback speed (mpv "speed" property)
+
+    // ---- Video adjustment state (accumulated by the +/- and rotate-step
+    // helpers; mirrors the corresponding mpv properties) ----
+    int         m_rotate{0};            // 0/90/180/270, "video-rotate"
+    double      m_zoom{0.0};            // log2 zoom, "video-zoom"
+    double      m_panX{0.0};            // "video-pan-x", -1..1
+    double      m_panY{0.0};            // "video-pan-y", -1..1
+    bool        m_deinterlace{false};   // "deinterlace"
+
     bool        m_initialized{false};
 
     void observeProperties();
