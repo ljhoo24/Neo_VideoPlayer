@@ -67,7 +67,7 @@ int main(int argc, char* argv[])
 
     app.setApplicationName("VideoPlayer");
     app.setOrganizationName("CustomMedia");
-    app.setApplicationVersion("1.0.8");
+    app.setApplicationVersion("1.0.9");
 
     // ---- Open log file before anything else ----
     {

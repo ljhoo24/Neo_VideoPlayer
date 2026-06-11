@@ -35,6 +35,7 @@
 #include <QEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QCursor>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
@@ -853,6 +854,14 @@ MainWindow::MainWindow(QWidget* parent)
     loadShortcuts();    // override defaults with any persisted values
     setupMenuBar();     // populate menu bar with the actions
     setupConnections();
+
+    // Mouse-wheel events are routed by cursor position in eventFilter().
+    // Install the filter application-wide so we see the wheel no matter
+    // which widget Windows delivered it to: WM_MOUSEWHEEL targets the
+    // *focused* window, and mpv's WS_DISABLED render HWND keeps focus off
+    // the playlist, so a hovered list would never scroll otherwise. The
+    // fullscreen OSD auto-show/hide (MouseMove) handler rides on this too.
+    qApp->installEventFilter(this);
 
     // Restore persisted filter values BEFORE the initial playlist load.
     // Writing into the widgets fires the textChanged / valueChanged
@@ -2749,8 +2758,8 @@ void MainWindow::onToggleFullscreen()
     positionFsControlsBar();
     positionFsTitle();
 
-    // Intercept all mouse-move events to implement auto-show/hide.
-    qApp->installEventFilter(this);
+    // Mouse-move auto-show/hide is handled by the app-wide event filter
+    // installed once in the constructor; nothing to install here.
 }
 
 void MainWindow::onExitFullscreen()
@@ -2758,7 +2767,8 @@ void MainWindow::onExitFullscreen()
     if (!isFullScreen())
         return;
 
-    qApp->removeEventFilter(this);
+    // Leave the app-wide event filter installed — it also drives wheel
+    // routing in windowed mode. Just stop the OSD idle timer.
     m_fsHideTimer->stop();
 
     // Title OSD is fullscreen-only — hide it as we leave.
@@ -3466,6 +3476,35 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
         // while the mouse is active and hides once it settles.
         m_fsHideTimer->start();
         // Do not consume — let the event reach its target.
+    }
+
+    // ── Mouse-wheel routing by cursor position ───────────────────────────
+    // Windows delivers WM_MOUSEWHEEL to the focused window, not the one
+    // under the cursor; mpv's WS_DISABLED render HWND keeps focus off the
+    // playlist, so a wheel spin over the list would otherwise do nothing.
+    // Re-dispatch by where the cursor actually is: over the playlist →
+    // scroll the list (consume). Anywhere else falls through untouched, so
+    // the video area still gets its volume gesture (MpvPlayerWidget) and the
+    // rating / filter spin boxes keep their own wheel-to-value behaviour.
+    if (event->type() == QEvent::Wheel && m_playlistView)
+    {
+        QWidget* under = QApplication::widgetAt(QCursor::pos());
+        if (under && (under == m_playlistView
+                      || m_playlistView->isAncestorOf(under)))
+        {
+            auto* we = static_cast<QWheelEvent*>(event);
+            const int notches = we->angleDelta().y() / 120;   // one notch = 120
+            if (notches != 0)
+            {
+                QScrollBar* sb = m_playlistView->verticalScrollBar();
+                // Scrollbar step is items (ScrollPerItem) or pixels
+                // (ScrollPerPixel); either way honour the OS wheel speed.
+                sb->setValue(sb->value()
+                             - notches * QApplication::wheelScrollLines()
+                                       * sb->singleStep());
+            }
+            return true;
+        }
     }
 
     // ── Drag-and-drop onto the playlist view ─────────────────────────────
