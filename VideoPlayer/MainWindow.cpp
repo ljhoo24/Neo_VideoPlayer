@@ -1356,6 +1356,11 @@ QWidget* MainWindow::buildRightPanel()
     m_mpvWidget = new MpvPlayerWidget(panel);
     m_mpvWidget->setMinimumSize(640, 360);
     m_mpvWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    // Drag-and-drop onto the video area = add to playlist AND play immediately
+    // (dropping onto the playlist only adds — see eventFilter). The embedded
+    // mpv HWND is WS_DISABLED, so OLE drop falls through to this widget's HWND.
+    m_mpvWidget->setAcceptDrops(true);
+    m_mpvWidget->installEventFilter(this);
     layout->addWidget(m_mpvWidget, 1);
 
     m_controlsBar = buildControlsBar();
@@ -3519,6 +3524,77 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
                     refreshPlaylist();
                     statusBar()->showMessage(
                         QString("%1개 파일 추가됨").arg(added), 3000);
+                }
+                return true;
+            }
+        }
+    }
+
+    // ── Drag-and-drop onto the video area ────────────────────────────────
+    // Same accept logic as the playlist, but on drop we add the files AND
+    // immediately play the first one (openExternalFile bumps it to the front
+    // and starts playback). Dropping onto the playlist only adds.
+    if (obj == m_mpvWidget)
+    {
+        if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove)
+        {
+            auto* de = static_cast<QDragEnterEvent*>(event);
+            if (de->mimeData()->hasUrls())
+            {
+                de->acceptProposedAction();
+                return true;
+            }
+        }
+        else if (event->type() == QEvent::Drop)
+        {
+            auto* de = static_cast<QDropEvent*>(event);
+            if (de->mimeData()->hasUrls())
+            {
+                de->acceptProposedAction();
+
+                const QSet<QString> videoExts =
+                    QSet<QString>(videoExtensions().begin(), videoExtensions().end());
+
+                QString firstVideo;
+                int added = 0;
+                for (const QUrl& url : de->mimeData()->urls())
+                {
+                    if (!url.isLocalFile()) continue;
+                    const QString path = url.toLocalFile();
+                    const QFileInfo fi(path);
+
+                    if (fi.isDir())
+                    {
+                        QDirIterator it(path,
+                                        videoNameFilters(),
+                                        QDir::Files | QDir::Readable,
+                                        QDirIterator::Subdirectories
+                                          | QDirIterator::FollowSymlinks);
+                        while (it.hasNext())
+                        {
+                            const QString f = it.next();
+                            if (m_db.addMediaFile(f, findIndexSheetFor(f)))
+                                ++added;
+                            if (firstVideo.isEmpty())
+                                firstVideo = f;
+                        }
+                    }
+                    else if (videoExts.contains(fi.suffix().toLower()))
+                    {
+                        if (m_db.addMediaFile(path, findIndexSheetFor(path)))
+                            ++added;
+                        if (firstVideo.isEmpty())
+                            firstVideo = path;
+                    }
+                }
+
+                if (!firstVideo.isEmpty())
+                {
+                    // Adds-front + plays + refreshes the playlist.
+                    openExternalFile(firstVideo);
+                    if (added > 0)
+                        statusBar()->showMessage(
+                            QString("%1개 파일 추가됨 · 재생 시작").arg(added), 3000);
                 }
                 return true;
             }
