@@ -9,7 +9,18 @@ QWidget {
     background-color: @BG@;
     color: @TEXT@;
     font-family: "Segoe UI", "Malgun Gothic", sans-serif;
-    font-size: 13px;
+    font-size: 14px;
+}
+
+QLabel[secondaryText="true"] {
+    color: @TEXT_MUTED@;
+    font-size: 12px;
+}
+
+QLabel[sectionTitle="true"] {
+    color: @TEXT@;
+    font-size: 15px;
+    font-weight: 600;
 }
 
 QToolTip {
@@ -106,7 +117,7 @@ QListView {
     alternate-background-color: @ALT_BASE@;
 }
 QListView::item {
-    padding: 7px 8px;
+    padding: 9px 10px;
     border-radius: 6px;
     margin: 1px 2px;
 }
@@ -115,19 +126,59 @@ QListView::item:selected { background-color: @ACCENT@; color: @ON_ACCENT@; }
 
 /* ---- GroupBox ---- */
 QGroupBox {
-    background-color: @GROUP_BG@;
-    border: 1px solid @BORDER@;
-    border-radius: 8px;
-    margin-top: 14px;
-    padding: 10px 10px 10px 10px;
+    background-color: transparent;
+    border: none;
+    margin-top: 18px;
+    padding: 8px 0 0 0;
     font-weight: 600;
 }
 QGroupBox::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    left: 12px;
-    padding: 0 4px;
+    left: 0;
+    padding: 0;
+    color: @TEXT@;
+    font-size: 15px;
+}
+
+/* ---- Collapsible media details ---- */
+QPushButton#DetailsToggle {
+    background-color: transparent;
+    border: none;
+    border-top: 1px solid @BORDER@;
+    border-radius: 0;
+    padding: 8px 4px 4px 4px;
+    text-align: left;
+    font-weight: 600;
+}
+QPushButton#DetailsToggle:hover { color: @ACCENT@; background-color: transparent; }
+
+QTabWidget#DetailsTabs::pane {
+    background-color: @SURFACE@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    top: -1px;
+}
+QTabWidget#DetailsTabs QTabBar::tab {
+    background-color: transparent;
     color: @TEXT_MUTED@;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 7px 11px;
+}
+QTabWidget#DetailsTabs QTabBar::tab:hover { color: @TEXT@; }
+QTabWidget#DetailsTabs QTabBar::tab:selected {
+    color: @ACCENT@;
+    border-bottom-color: @ACCENT@;
+    font-weight: 600;
+}
+
+QLabel#ThumbnailPreview {
+    background-color: @ALT_BASE@;
+    color: @TEXT_DISABLED@;
+    border: 1px dashed @BORDER@;
+    border-radius: 6px;
+    font-size: 12px;
 }
 
 /* ---- Sliders ---- */
@@ -168,6 +219,17 @@ QMenu::item { padding: 6px 24px 6px 12px; border-radius: 6px; }
 QMenu::item:selected { background-color: @ACCENT@; color: @ON_ACCENT@; }
 QMenu::separator { height: 1px; background: @BORDER@; margin: 4px 8px; }
 
+QMenu#PlaybackToolsMenu { padding: 0; }
+QWidget#PlaybackToolsPanel {
+    background-color: @SURFACE@;
+}
+QWidget#PlaybackToolsPanel QLabel[toolLabel="true"] {
+    color: @TEXT_MUTED@;
+    font-size: 12px;
+    font-weight: 600;
+}
+QPushButton#MoreButton::menu-indicator { image: none; width: 0; }
+
 /* ---- Status bar ---- */
 QStatusBar { background-color: @BAR_BG@; color: @TEXT_MUTED@; border-top: 1px solid @ELEVATED@; }
 
@@ -180,4 +242,10 @@ QFrame#ControlsBar {
     background-color: @BAR_BG@;
     border: none;
     border-top: 1px solid @ELEVATED@;
+}
+
+QLabel#TimeLabel {
+    color: @TEXT_MUTED@;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 12px;
 }

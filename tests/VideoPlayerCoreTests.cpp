@@ -2,6 +2,7 @@
 #include "PlaylistModel.h"
 
 #include <QColor>
+#include <QFont>
 #include <QImage>
 #include <QPixmap>
 #include <QSqlDatabase>
@@ -185,6 +186,31 @@ void VideoPlayerCoreTests::playlistFilteringAndUpdatesStayConsistent()
         &model, QAbstractItemModelTester::FailureReportingMode::QtTest);
     model.loadFromDatabase(*m_db);
     QCOMPARE(model.rowCount(), 2);
+
+    model.setPlaybackState(alpha.id, 0.42);
+    const QModelIndex playingIndex = model.index(model.rowForId(alpha.id));
+    const QString playingLabel = model.data(playingIndex).toString();
+    QVERIFY(playingLabel.startsWith(QStringLiteral("▶")));
+    QVERIFY(playingLabel.contains(QStringLiteral("★ 90")));
+    QVERIFY(playingLabel.contains(QStringLiteral("42%")));
+    QVERIFY(model.data(
+        playingIndex,
+        static_cast<int>(PlaylistModel::MediaRole::IsPlaying)).toBool());
+    QCOMPARE(model.data(
+        playingIndex,
+        static_cast<int>(PlaylistModel::MediaRole::PlaybackProgress)).toInt(),
+        42);
+    QVERIFY(qvariant_cast<QFont>(
+        model.data(playingIndex, Qt::FontRole)).bold());
+
+    model.setPlaybackState(0, -1.0);
+    QVERIFY(!model.data(
+        playingIndex,
+        static_cast<int>(PlaylistModel::MediaRole::IsPlaying)).toBool());
+    QCOMPARE(model.data(
+        playingIndex,
+        static_cast<int>(PlaylistModel::MediaRole::PlaybackProgress)).toInt(),
+        -1);
 
     model.setFilter("ALPHA");
     QCOMPARE(model.rowCount(), 1);

@@ -116,10 +116,15 @@ if (-not (Test-Path -LiteralPath $ctestPath)) {
     throw "CTest was not found next to CMake: $ctestPath"
 }
 
+# Keep MSVC's /showIncludes prefix in the form Ninja recognizes. On a
+# localized Visual Studio installation the translated prefix can otherwise
+# flood test output with every transitive header path.
+[Environment]::SetEnvironmentVariable('VSLANG', '1033', 'Process')
+
 Push-Location $repoRoot
 try {
     Write-Host "Configuring: $configurePreset" -ForegroundColor Cyan
-    & $cmakePath --preset $configurePreset
+    & $cmakePath --preset $configurePreset -DBUILD_TESTING=ON
     if ($LASTEXITCODE -ne 0) {
         throw "CMake configure failed with exit code $LASTEXITCODE."
     }

@@ -26,6 +26,8 @@ public:
         Rating        = Qt::UserRole + 4,
         Memo          = Qt::UserRole + 5,
         DateAdded     = Qt::UserRole + 6,
+        IsPlaying     = Qt::UserRole + 7,
+        PlaybackProgress = Qt::UserRole + 8,
     };
 
     explicit PlaylistModel(QObject* parent = nullptr);
@@ -39,6 +41,8 @@ public:
     void loadFromDatabase(DatabaseManager& db);
     void setFilter(const QString& query);
     void setMinRating(int minRating);
+    void setPlaybackState(int mediaId, double progress);
+    void clearThumbnailCache();
     [[nodiscard]] int minRating() const noexcept { return m_minRating; }
     void updateItem(const MediaItem& updated);
 
@@ -55,6 +59,8 @@ private:
     std::vector<MediaItem> m_filteredItems;
     QString                m_filterQuery;
     int                    m_minRating{0};
+    int                    m_playingId{0};
+    int                    m_playbackPercent{-1};
 
     // Thumbnail cache for the grid (Qt::DecorationRole). Scaling an
     // image from disk on every repaint would stutter the view, so we

@@ -19,6 +19,7 @@ class QSpinBox;
 class QTextEdit;
 class QSlider;
 class QComboBox;
+class QTabWidget;
 class QSplitter;
 class QListWidget;
 class QListWidgetItem;
@@ -163,6 +164,8 @@ private:
     QLineEdit*       m_searchEdit{nullptr};
     QSpinBox*        m_minRatingSpinBox{nullptr};
     QListView*       m_playlistView{nullptr};
+    QPushButton*     m_detailsToggleButton{nullptr};
+    QTabWidget*      m_detailsTabs{nullptr};
     ThumbnailLabel*  m_thumbnailLabel{nullptr};
     QSpinBox*        m_ratingSpinBox{nullptr};
     QTextEdit*   m_memoEdit{nullptr};
@@ -198,6 +201,7 @@ private:
     QPushButton* m_abClearButton{nullptr};
     QPushButton* m_frameBackButton{nullptr};
     QPushButton* m_frameFwdButton{nullptr};
+    QPushButton* m_moreButton{nullptr};
 
     // ---- QActions (own their shortcuts — registered in createActions) ----
     // Every action customisable from the Options dialog must be kept in

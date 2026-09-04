@@ -1,9 +1,14 @@
 #include "PlaylistModel.h"
 
 #include <QDebug>
+#include <QApplication>
+#include <QFont>
+#include <QPalette>
 #include <QPainter>
 #include <QFileInfo>
+#include <QStringList>
 #include <algorithm>
+#include <cmath>
 #include <ranges>
 
 namespace
@@ -45,7 +50,29 @@ QVariant PlaylistModel::data(const QModelIndex& index, int role) const
     switch (role)
     {
     case Qt::DisplayRole:
-        return item.title;
+    {
+        QStringList details;
+        if (item.rating > 0)
+            details.append(QString("★ %1").arg(item.rating));
+        if (item.id == m_playingId && m_playbackPercent >= 0)
+            details.append(QString("%1%").arg(m_playbackPercent));
+
+        QString label = item.title;
+        if (!details.isEmpty())
+            label += QStringLiteral("  ·  ") + details.join(QStringLiteral("  ·  "));
+        if (item.id == m_playingId)
+            label.prepend(QStringLiteral("▶  "));
+        return label;
+    }
+
+    case Qt::FontRole:
+        if (item.id == m_playingId)
+        {
+            QFont font;
+            font.setBold(true);
+            return font;
+        }
+        return {};
 
     case Qt::DecorationRole:
         // Used by the grid (IconMode) view. In list mode the icon is
@@ -74,6 +101,12 @@ QVariant PlaylistModel::data(const QModelIndex& index, int role) const
     case static_cast<int>(MediaRole::DateAdded):
         return item.dateAdded;
 
+    case static_cast<int>(MediaRole::IsPlaying):
+        return item.id == m_playingId;
+
+    case static_cast<int>(MediaRole::PlaybackProgress):
+        return item.id == m_playingId ? m_playbackPercent : -1;
+
     default:
         return {};
     }
@@ -88,6 +121,8 @@ QHash<int, QByteArray> PlaylistModel::roleNames() const
     roles[static_cast<int>(MediaRole::Rating)]        = "rating";
     roles[static_cast<int>(MediaRole::Memo)]          = "memo";
     roles[static_cast<int>(MediaRole::DateAdded)]     = "dateAdded";
+    roles[static_cast<int>(MediaRole::IsPlaying)]     = "isPlaying";
+    roles[static_cast<int>(MediaRole::PlaybackProgress)] = "playbackProgress";
     return roles;
 }
 
@@ -132,6 +167,36 @@ void PlaylistModel::setMinRating(int minRating)
     beginResetModel();
     applyFilter();
     endResetModel();
+}
+
+void PlaylistModel::setPlaybackState(int mediaId, double progress)
+{
+    const int normalizedId = mediaId > 0 ? mediaId : 0;
+    int percent = -1;
+    if (normalizedId > 0 && std::isfinite(progress))
+        percent = qBound(0, qRound(progress * 100.0), 100);
+
+    if (m_playingId == normalizedId && m_playbackPercent == percent)
+        return;
+
+    m_playingId = normalizedId;
+    m_playbackPercent = percent;
+    if (rowCount() > 0)
+    {
+        emit dataChanged(index(0), index(rowCount() - 1),
+                         { Qt::DisplayRole,
+                           Qt::FontRole,
+                           static_cast<int>(MediaRole::IsPlaying),
+                           static_cast<int>(MediaRole::PlaybackProgress) });
+    }
+}
+
+void PlaylistModel::clearThumbnailCache()
+{
+    m_thumbCache.clear();
+    if (rowCount() > 0)
+        emit dataChanged(index(0), index(rowCount() - 1),
+                         { Qt::DecorationRole });
 }
 
 void PlaylistModel::updateItem(const MediaItem& updated)
@@ -226,9 +291,9 @@ QPixmap PlaylistModel::thumbnailFor(const MediaItem& item) const
                                  Qt::SmoothTransformation);
     }
 
-    // Fall back to a generated placeholder: a dark rounded rect with a
-    // theme-ish border and a simple ▶ glyph, so empty/broken thumbnails
-    // don't leave grid cells blank.
+    // Fall back to a palette-aware rounded rect with a simple ▶ glyph, so
+    // empty/broken thumbnails track both dark and light themes without
+    // leaving grid cells blank.
     if (result.isNull())
     {
         QPixmap ph(kThumbW, kThumbH);
@@ -238,13 +303,14 @@ QPixmap PlaylistModel::thumbnailFor(const MediaItem& item) const
         p.setRenderHint(QPainter::Antialiasing, true);
 
         const QRectF box(0.5, 0.5, kThumbW - 1.0, kThumbH - 1.0);
-        p.setBrush(QColor(0x26, 0x2a, 0x30));        // dark fill
-        p.setPen(QPen(QColor(0x3a, 0x3f, 0x47), 1)); // theme-ish border
+        const QPalette palette = QApplication::palette();
+        p.setBrush(palette.color(QPalette::AlternateBase));
+        p.setPen(QPen(palette.color(QPalette::Mid), 1));
         p.drawRoundedRect(box, 6, 6);
 
         // Centered play triangle.
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0x6a, 0x70, 0x7a));
+        p.setBrush(palette.color(QPalette::PlaceholderText));
         const double cx = kThumbW / 2.0;
         const double cy = kThumbH / 2.0;
         const QPointF tri[3] = {

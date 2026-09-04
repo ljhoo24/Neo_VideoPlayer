@@ -209,7 +209,7 @@ void OptionsDialog::buildGeneralTab()
     auto* hint = new QLabel(
         "* NIS 모드일 때만 적용되며 OK 누르면 즉시 반영됩니다.",
         upGroup);
-    hint->setStyleSheet("color: gray;");
+    hint->setProperty("secondaryText", true);
     upForm->addRow(hint);
 
     vl->addWidget(upGroup);
@@ -368,7 +368,7 @@ void OptionsDialog::buildGeneralTab()
     auto* audioHint = new QLabel(
         "* 각 게인은 -12 ~ +12 dB, 0 = 평탄. OK 누르면 즉시 반영됩니다.",
         audioGroup);
-    audioHint->setStyleSheet("color: gray;");
+    audioHint->setProperty("secondaryText", true);
     audioForm->addRow(audioHint);
 
     vl->addWidget(audioGroup);
@@ -385,7 +385,7 @@ void OptionsDialog::updateAccentSwatch()
     if (!m_accentButton)
         return;
     m_accentButton->setStyleSheet(
-        QString("QPushButton { background-color: %1; border: 1px solid #808080; "
+        QString("QPushButton { background-color: %1; border: 1px solid palette(mid); "
                 "border-radius: 4px; }")
             .arg(m_accentColor.name()));
 }

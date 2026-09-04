@@ -55,7 +55,8 @@ QColor accent();
 QColor iconColor();
 // Muted glyph colour (search adornment, spin arrows, …).
 QColor iconMuted();
-// Text/glyph colour drawn ON an accent fill (play, save) — ~white.
+// Text/glyph colour drawn ON an accent fill — selected dynamically for
+// readable contrast with both dark and pale custom accent colours.
 QColor onAccent();
 // Destructive-action colour (delete button).
 QColor danger();

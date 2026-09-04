@@ -10,6 +10,8 @@
 #include <QString>
 #include <QDebug>
 
+#include <cmath>
+
 // ============================================================
 // Internal state (process-global — one theme for the whole app)
 // ============================================================
@@ -25,7 +27,7 @@ QColor              g_accent = QColor(0x4f, 0x93, 0xff);
 struct Palette
 {
     QString bg, text, textMuted, surface, elevated, border, borderStrong,
-            textDisabled, onAccent, altBase, hover, groupBg, barBg;
+            textDisabled, altBase, hover, groupBg, barBg;
 };
 
 const Palette kDark {
@@ -37,7 +39,6 @@ const Palette kDark {
     /* border        */ "#3a3d44",
     /* borderStrong  */ "#4a4e56",
     /* textDisabled  */ "#6b7079",
-    /* onAccent      */ "#ffffff",
     /* altBase       */ "#292b30",
     /* hover         */ "#313438",
     /* groupBg       */ "#222428",
@@ -54,7 +55,6 @@ const Palette kLight {
     /* border        */ "#d0d4da",
     /* borderStrong  */ "#b6bcc4",
     /* textDisabled  */ "#a8adb5",
-    /* onAccent      */ "#ffffff",
     /* altBase       */ "#f0f1f4",
     /* hover         */ "#e4e7ec",
     /* groupBg       */ "#fbfbfc",
@@ -82,6 +82,26 @@ const Palette& activePalette()
     return effectiveIsDark() ? kDark : kLight;
 }
 
+// Pick whichever text colour has the stronger WCAG contrast against the
+// user-selected accent. This keeps pale yellow/cyan custom accents readable
+// instead of always drawing white text on top of them.
+QColor accentTextColor()
+{
+    const auto linearChannel = [](int value) {
+        const double srgb = value / 255.0;
+        return srgb <= 0.04045
+            ? srgb / 12.92
+            : std::pow((srgb + 0.055) / 1.055, 2.4);
+    };
+    const double luminance =
+        0.2126 * linearChannel(g_accent.red())
+      + 0.7152 * linearChannel(g_accent.green())
+      + 0.0722 * linearChannel(g_accent.blue());
+    const double whiteContrast = 1.05 / (luminance + 0.05);
+    const double darkContrast  = (luminance + 0.05) / 0.05;
+    return darkContrast > whiteContrast ? QColor("#14161a") : QColor("#ffffff");
+}
+
 // Build the full @TOKEN@ → hex map for the active theme, folding in the
 // accent (and its derived hover/press shades). lighter()/darker() give a
 // cheap, consistent way to derive the two accent variants from any user
@@ -99,7 +119,7 @@ QHash<QString, QString> buildTokens()
     t["BORDER"]        = p.border;
     t["BORDER_STRONG"] = p.borderStrong;
     t["TEXT_DISABLED"] = p.textDisabled;
-    t["ON_ACCENT"]     = p.onAccent;
+    t["ON_ACCENT"]     = accentTextColor().name();
     t["ALT_BASE"]      = p.altBase;
     t["HOVER"]         = p.hover;
     t["GROUP_BG"]      = p.groupBg;
@@ -158,7 +178,7 @@ void apply(QApplication& app)
     pal.setColor(QPalette::ButtonText,      hex(p.text));
     pal.setColor(QPalette::BrightText,      Qt::red);
     pal.setColor(QPalette::Highlight,       g_accent);
-    pal.setColor(QPalette::HighlightedText, hex(p.onAccent));
+    pal.setColor(QPalette::HighlightedText, accentTextColor());
     pal.setColor(QPalette::Link,            g_accent);
     pal.setColor(QPalette::Disabled, QPalette::Text,       hex(p.textDisabled));
     pal.setColor(QPalette::Disabled, QPalette::ButtonText, hex(p.textDisabled));
@@ -228,7 +248,7 @@ QColor iconMuted()
 
 QColor onAccent()
 {
-    return hex(activePalette().onAccent);
+    return accentTextColor();
 }
 
 QColor danger()
