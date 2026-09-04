@@ -15,7 +15,7 @@
 ; ============================================================
 
 #define MyAppName        "VideoPlayer"
-#define MyAppVersion     "1.0.9"
+#define MyAppVersion     "1.0.10"
 #define MyAppPublisher   "CustomMedia"
 #define MyAppExeName     "VideoPlayer.exe"
 #define MyProgId         "CustomMedia.VideoPlayer"
@@ -60,7 +60,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 ; Whole deployed build tree, minus CMake/build leftovers.
 Source: "{#SrcDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion; \
-  Excludes: "CMakeFiles\*,VideoPlayer_autogen\*,VideoPlayerCoreTests_autogen\*,Testing\*,VideoPlayerCoreTests.exe,*.lib,*.exp,*.pdb,*.ilk,*.manifest,*.obj,CMakeCache.txt,cmake_install.cmake,build.ninja,.ninja_*,*.cmake"
+  Excludes: "CMakeFiles\*,VideoPlayer_autogen\*,VideoPlayerCoreTests_autogen\*,Testing\*,VideoPlayerCoreTests.exe,*.lib,*.exp,*.pdb,*.ilk,*.manifest,*.obj,CMakeCache.txt,cmake_install.cmake,build.ninja,.ninja_*,*.cmake,DartConfiguration.tcl"
 
 [Icons]
 Name: "{group}\{#MyAppName}";          Filename: "{app}\{#MyAppExeName}"
