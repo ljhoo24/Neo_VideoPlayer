@@ -4,6 +4,7 @@
 #include <QList>
 #include <QPixmap>   // m_seekPreviewSheet is held by value
 #include <QString>
+#include <memory>
 #include <optional>
 #include "DatabaseManager.h"
 #include "PlaylistModel.h"
@@ -25,6 +26,7 @@ class QModelIndex;
 class QAction;
 class QActionGroup;
 class ThumbnailLabel;   // defined file-scope in MainWindow.cpp
+class IndexSheetGenerator; // asynchronous thumbnail capture helper
 
 // ============================================================
 // MainWindow
@@ -257,6 +259,15 @@ private:
     double                   m_duration{0.0};
     RepeatMode               m_repeatMode{RepeatMode::None};
 
+    // ---- Thumbnail jobs ----
+    // A screenshot/index sheet is tied to the item that is actually loaded,
+    // not whichever playlist row happens to be selected when an asynchronous
+    // mpv command completes.
+    std::shared_ptr<IndexSheetGenerator> m_indexSheetJob;
+    int                      m_pendingAutoThumbnailId{0};
+    int                      m_pendingAutoThumbnailAttempts{0};
+    bool                     m_screenshotPending{false};
+
     // ---- Metadata-pane dirty tracking ----
     // Flips on when the user edits rating/memo; stays on until they hit
     // Save OR we auto-flush on a row switch / window close. Without this a
@@ -346,6 +357,14 @@ private:
     // overwritten by a new selection or the window closes. No-op when clean.
     void flushPendingMetaEdits();
     void updateThumbnailDisplay(const QString& path);
+    void pollScreenshotResult(int mediaId,
+                              const QString& expectedVideoPath,
+                              const QString& temporaryPath,
+                              const QString& finalPath,
+                              int attempt);
+    void tryStartPendingAutoThumbnail();
+    void cancelAutoThumbnailJob(bool restorePlayback = true);
+    void applyThumbnailResult(int mediaId, const QString& path);
 
     // ---- Bookmarks ----
     // Reload the bookmark list for the currently SELECTED item

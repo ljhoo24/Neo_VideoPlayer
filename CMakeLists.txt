@@ -5,6 +5,8 @@ project(VideoPlayer
     LANGUAGES CXX
 )
 
+include(CTest)
+
 # ================================================================
 # C++20
 # ================================================================
@@ -18,18 +20,11 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 # ================================================================
-# Qt6 (falls back to Qt5 if Qt6 is not found)
+# Qt 6.5+ (QStyleHints::colorScheme and Qt 6 event APIs are used)
 # ================================================================
-find_package(Qt6 QUIET COMPONENTS Widgets Sql Network)
-
-if(Qt6_FOUND)
-    message(STATUS "VideoPlayer: using Qt ${Qt6_VERSION}")
-    set(QT_LIBS Qt6::Widgets Qt6::Sql Qt6::Network)
-else()
-    find_package(Qt5 REQUIRED COMPONENTS Widgets Sql Network)
-    message(STATUS "VideoPlayer: using Qt ${Qt5_VERSION} (Qt6 not found)")
-    set(QT_LIBS Qt5::Widgets Qt5::Sql Qt5::Network)
-endif()
+find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Sql Network)
+message(STATUS "VideoPlayer: using Qt ${Qt6_VERSION}")
+set(QT_LIBS Qt6::Widgets Qt6::Sql Qt6::Network)
 
 # ================================================================
 # libmpv
@@ -113,6 +108,52 @@ target_link_libraries(${PROJECT_NAME}
 )
 
 # ================================================================
+# Automated tests
+#
+# These tests deliberately exercise the deterministic core without opening
+# a real video decoder. They run with Qt's offscreen platform, so they are
+# suitable for local builds and headless CI alike.
+# ================================================================
+if(BUILD_TESTING)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Test)
+
+    add_executable(VideoPlayerCoreTests
+        tests/VideoPlayerCoreTests.cpp
+        VideoPlayer/DatabaseManager.cpp
+        VideoPlayer/PlaylistModel.cpp
+        VideoPlayer/DatabaseManager.h
+        VideoPlayer/PlaylistModel.h
+    )
+
+    target_include_directories(VideoPlayerCoreTests
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/VideoPlayer
+    )
+
+    target_link_libraries(VideoPlayerCoreTests
+        PRIVATE
+            Qt6::Test
+            Qt6::Widgets
+            Qt6::Sql
+    )
+
+    # Use imported-target locations rather than assuming a particular Qt
+    # directory layout (official SDK, system package and vcpkg layouts differ).
+    if(NOT TARGET Qt6::QOffscreenIntegrationPlugin)
+        message(FATAL_ERROR
+            "Qt's offscreen platform plugin is required to run the tests")
+    endif()
+    add_test(NAME VideoPlayer.Core COMMAND
+        "${CMAKE_COMMAND}"
+            "-DVP_TEST_EXECUTABLE=$<TARGET_FILE:VideoPlayerCoreTests>"
+            "-DVP_TEST_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/VideoPlayerCoreTests.txt"
+            "-DVP_QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>/.."
+            "-DVP_QT_RUNTIME_PATH=$<TARGET_FILE_DIR:Qt6::Core>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/RunQtTest.cmake"
+    )
+    set_tests_properties(VideoPlayer.Core PROPERTIES TIMEOUT 60)
+endif()
+
+# ================================================================
 # Windows post-build: copy mpv DLL next to the .exe
 # ================================================================
 if(WIN32)
@@ -141,23 +182,21 @@ if(WIN32)
                         "copy it manually next to the executable.")
     endif()
 
-    # Deploy Qt DLLs with windeployqt (Qt6)
-    if(Qt6_FOUND)
-        find_program(WINDEPLOYQT windeployqt
-            HINTS "${Qt6_DIR}/../../../bin")
-        if(WINDEPLOYQT)
-            # --compiler-runtime copies the MSVC runtime DLLs (vcruntime140*,
-            # msvcp140*, …) next to the exe so the build runs on machines that
-            # don't have the matching VC++ redistributable installed. Requires
-            # the VS dev-environment vars (build from a Developer prompt).
-            add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-                COMMAND "${WINDEPLOYQT}"
-                        --no-translations
-                        --compiler-runtime
-                        "$<TARGET_FILE:${PROJECT_NAME}>"
-                COMMENT "Running windeployqt…"
-            )
-        endif()
+    # Deploy Qt DLLs with windeployqt.
+    find_program(WINDEPLOYQT windeployqt
+        HINTS "${Qt6_DIR}/../../../bin")
+    if(WINDEPLOYQT)
+        # --compiler-runtime copies the MSVC runtime DLLs (vcruntime140*,
+        # msvcp140*, …) next to the exe so the build runs on machines that
+        # don't have the matching VC++ redistributable installed. Requires
+        # the VS dev-environment vars (build from a Developer prompt).
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND "${WINDEPLOYQT}"
+                    --no-translations
+                    --compiler-runtime
+                    "$<TARGET_FILE:${PROJECT_NAME}>"
+            COMMENT "Running windeployqt…"
+        )
     endif()
 endif()
 

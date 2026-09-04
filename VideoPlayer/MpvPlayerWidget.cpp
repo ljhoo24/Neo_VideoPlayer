@@ -104,10 +104,10 @@ MpvPlayerWidget::~MpvPlayerWidget()
 // Public playback control
 // ============================================================
 
-void MpvPlayerWidget::loadFile(const QString& filePath)
+bool MpvPlayerWidget::loadFile(const QString& filePath)
 {
     if (!m_mpv)
-        return;
+        return false;
 
     // Windows UNC path fix.
     //
@@ -127,7 +127,21 @@ void MpvPlayerWidget::loadFile(const QString& filePath)
     qDebug() << "[mpv] loadfile:" << nativePath;
 
     const char* args[] = { "loadfile", utf8.constData(), nullptr };
-    mpv_command(m_mpv, args);
+    const int loadRc = mpv_command(m_mpv, args);
+    if (loadRc < 0)
+    {
+        qWarning() << "[mpv] loadfile failed:" << mpv_error_string(loadRc)
+                   << nativePath;
+        return false;
+    }
+
+    // Do not expose metadata cached from the previously-loaded file while
+    // this asynchronous load is in flight.  Thumbnail generation and the
+    // seek UI both use these accessors.
+    m_position = 0.0;
+    m_duration = 0.0;
+    emit positionChanged(0.0);
+    emit durationChanged(0.0);
 
     // mpv's "pause" is a global runtime state, not per-file — a new
     // loadfile inherits whatever pause state was active for the previous
@@ -138,7 +152,12 @@ void MpvPlayerWidget::loadFile(const QString& filePath)
     // the loadfile command is queued; mpv applies it to the file that
     // becomes current.
     int unpause = 0;
-    mpv_set_property(m_mpv, "pause", MPV_FORMAT_FLAG, &unpause);
+    const int pauseRc = mpv_set_property(m_mpv, "pause", MPV_FORMAT_FLAG, &unpause);
+    if (pauseRc < 0)
+        qWarning() << "[mpv] unpause after load failed:"
+                   << mpv_error_string(pauseRc);
+
+    return true;
 }
 
 void MpvPlayerWidget::stop()
@@ -172,6 +191,17 @@ void MpvPlayerWidget::togglePause()
 
     const char* args[] = { "cycle", "pause", nullptr };
     mpv_command(m_mpv, args);
+}
+
+void MpvPlayerWidget::setPaused(bool paused)
+{
+    if (!m_mpv)
+        return;
+
+    int flag = paused ? 1 : 0;
+    const int rc = mpv_set_property(m_mpv, "pause", MPV_FORMAT_FLAG, &flag);
+    if (rc < 0)
+        qWarning() << "[mpv] set pause failed:" << mpv_error_string(rc);
 }
 
 // ============================================================
@@ -752,14 +782,21 @@ void MpvPlayerWidget::applyUpscalingProfile()
 // Screenshot (used for thumbnail generation)
 // ============================================================
 
-void MpvPlayerWidget::takeScreenshot(const QString& outputPath)
+bool MpvPlayerWidget::takeScreenshot(const QString& outputPath)
 {
     if (!m_mpv)
-        return;
+        return false;
 
     const QByteArray utf8 = outputPath.toUtf8();
     const char* args[]    = { "screenshot-to-file", utf8.constData(), "video", nullptr };
-    mpv_command(m_mpv, args);
+    const int rc = mpv_command(m_mpv, args);
+    if (rc < 0)
+    {
+        qWarning() << "[mpv] screenshot-to-file failed:"
+                   << mpv_error_string(rc) << outputPath;
+        return false;
+    }
+    return true;
 }
 
 // ============================================================
@@ -824,6 +861,23 @@ QString MpvPlayerWidget::videoCodec() const
     const QString s = QString::fromUtf8(raw);
     mpv_free(raw);
     return s;
+}
+
+QString MpvPlayerWidget::currentFilePath() const
+{
+    if (!m_mpv)
+        return {};
+
+    char* raw = nullptr;
+    if (mpv_get_property(m_mpv, "path", MPV_FORMAT_STRING, &raw) < 0
+        || raw == nullptr)
+    {
+        return {};
+    }
+
+    const QString path = QDir::fromNativeSeparators(QString::fromUtf8(raw));
+    mpv_free(raw);
+    return path;
 }
 
 // ============================================================

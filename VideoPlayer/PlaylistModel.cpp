@@ -141,7 +141,13 @@ void PlaylistModel::updateItem(const MediaItem& updated)
         [id = updated.id](const MediaItem& mi) { return mi.id == id; });
 
     if (it != m_allItems.end())
+    {
+        // Regenerated screenshots normally overwrite the same path. Evict
+        // both keys so DecorationRole cannot keep serving the old pixmap.
+        m_thumbCache.remove(it->thumbnailPath);
+        m_thumbCache.remove(updated.thumbnailPath);
         *it = updated;
+    }
 
     // Re-derive the filtered view so the display stays consistent
     beginResetModel();

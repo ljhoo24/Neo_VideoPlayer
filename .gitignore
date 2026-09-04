@@ -4,7 +4,8 @@
 /build/
 /x64/
 VideoPlayer/x64/
-VideoPlayer/VideoPlayer/    # MSBuild intermediate output dir (same name as project)
+# MSBuild intermediate output dir (same name as project)
+VideoPlayer/VideoPlayer/
 
 # Qt moc/uic/rcc generated sources — CMake AUTOMOC and qmake regenerate
 # these on every build, no value in tracking them.
@@ -58,7 +59,8 @@ Makefile.Release
 # ============================================================
 # Tooling caches
 # ============================================================
-.claude/            # Claude Code per-user state
+# Claude Code per-user state
+.claude/
 __pycache__/
 *.pyc
 

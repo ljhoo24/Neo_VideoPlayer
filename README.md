@@ -71,6 +71,13 @@ cmake --build build/release
 ```
 다른 위치면 `-DMPV_ROOT=<path>`. `windeployqt`가 Qt DLL을 자동 배포하고, `libmpv-2.dll` + `shaders/NVScaler.glsl`도 POST_BUILD에서 복사됩니다. `--compiler-runtime`으로 MSVC 런타임도 함께 배포.
 
+### 자동화 테스트
+```bash
+powershell -ExecutionPolicy Bypass -File scripts/run-tests.ps1
+```
+
+스크립트가 Visual Studio의 CMake/MSVC 환경까지 자동으로 찾아 구성·빌드·CTest 실행을 진행합니다. 테스트는 임시 SQLite DB와 Qt 오프스크린 플랫폼을 사용하므로 실제 사용자 DB나 영상 파일을 변경하지 않습니다. 테스트 타깃이 필요 없는 배포 전용 구성에서는 CMake 설정에 `-DBUILD_TESTING=OFF`를 추가할 수 있습니다.
+
 ### Visual Studio
 `VideoPlayer.slnx` 열고 빌드. 또는 폴더를 열어 `CMakePresets.json`으로 빌드. `MpvRoot`/`Qt6*` 매크로는 `VideoPlayer/VideoPlayer.vcxproj` 상단에서 확인.
 
@@ -87,9 +94,10 @@ VideoPlayer/
 ├── CMakePresets.json            # CMake 프리셋 (VS 폴더 빌드용)
 ├── VideoPlayer.slnx             # Visual Studio 솔루션
 ├── installer/VideoPlayer.iss    # Inno Setup 설치파일 스크립트
-├── scripts/                     # 기본앱 등록/해제 PowerShell
+├── scripts/                     # 빌드/테스트 및 기본앱 등 PowerShell
 ├── icon.ico, icon.png           # 아이콘
 ├── reference/                   # 인덱스 시트 알고리즘 Python 레퍼런스
+├── tests/                       # Qt Test 기반 DB/플레이리스트 자동화 테스트
 └── VideoPlayer/
     ├── main.cpp                 # 엔트리포인트 + 단일 인스턴스 IPC + 테마 로드
     ├── MainWindow.{h,cpp}       # 최상위 윈도우, UI, ImageViewerDialog

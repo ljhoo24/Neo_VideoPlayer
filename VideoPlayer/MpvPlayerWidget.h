@@ -27,11 +27,12 @@ public:
     MpvPlayerWidget& operator=(const MpvPlayerWidget&) = delete;
 
     // ---- Playback control ----
-    void loadFile(const QString& filePath);
+    [[nodiscard]] bool loadFile(const QString& filePath);
     void stop();
     void seek(double seconds);
     void seekRelative(double seconds);    // + forward / - backward
     void setVolume(int volume);     // 0-100
+    void setPaused(bool paused);
 
     // ---- Playback speed ----
     // 0.5 .. 2.0 typically; 1.0 = normal. Maps directly to mpv's "speed"
@@ -130,7 +131,7 @@ public:
     [[nodiscard]] int  trebleGain()     const noexcept { return m_trebleGain; }
     [[nodiscard]] int  preampGain()     const noexcept { return m_preampGain; }
 
-    void takeScreenshot(const QString& outputPath);
+    [[nodiscard]] bool takeScreenshot(const QString& outputPath);
 
     // ---- State queries ----
     [[nodiscard]] bool   isPaused()  const noexcept { return m_paused; }
@@ -143,6 +144,7 @@ public:
     // e.g. right after app startup when the selection was restored but
     // loadFile has not been called yet.
     [[nodiscard]] bool   hasFile()   const;
+    [[nodiscard]] QString currentFilePath() const;
 
     // ---- Video info (queried live from mpv; valid only after a file is loaded) ----
     [[nodiscard]] int     videoWidth()  const;

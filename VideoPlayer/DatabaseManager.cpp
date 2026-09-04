@@ -42,9 +42,15 @@ bool DatabaseManager::initialize(const QString& dbPath)
         return false;
     }
 
-    // Enable WAL mode for better concurrent performance
+    // Enable WAL mode for better concurrent performance and enforce
+    // bookmark ownership at the SQLite connection level.
     QSqlQuery pragmaQuery(m_db);
-    pragmaQuery.exec("PRAGMA journal_mode=WAL");
+    if (!pragmaQuery.exec("PRAGMA journal_mode=WAL"))
+        qWarning() << "[DB] enabling WAL failed:"
+                   << pragmaQuery.lastError().text();
+    if (!pragmaQuery.exec("PRAGMA foreign_keys=ON"))
+        qWarning() << "[DB] enabling foreign keys failed:"
+                   << pragmaQuery.lastError().text();
 
     m_initialized = createTables();
 
@@ -89,7 +95,9 @@ bool DatabaseManager::createTables()
             media_id  INTEGER NOT NULL,
             position  REAL    NOT NULL,
             note      TEXT    NOT NULL DEFAULT '',
-            created   TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+            created   TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (media_id) REFERENCES media_files(id)
+                ON DELETE CASCADE
         )
     )SQL");
 
@@ -101,8 +109,13 @@ bool DatabaseManager::createTables()
     }
 
     // Lookups are always "all bookmarks for one media row" — index media_id.
-    q.exec("CREATE INDEX IF NOT EXISTS idx_bookmarks_media "
-           "ON bookmarks(media_id)");
+    if (!q.exec("CREATE INDEX IF NOT EXISTS idx_bookmarks_media "
+                "ON bookmarks(media_id)"))
+    {
+        qWarning() << "[DB] create bookmark index failed:"
+                   << q.lastError().text();
+        return false;
+    }
 
     return true;
 }
@@ -224,6 +237,27 @@ bool DatabaseManager::updateMemo(int id, const QString& memo)
     return true;
 }
 
+bool DatabaseManager::updateMetadata(int id, int rating, const QString& memo)
+{
+    if (!m_initialized)
+        return false;
+
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE media_files SET rating = :rating, memo = :memo "
+              "WHERE id = :id");
+    q.bindValue(":rating", rating);
+    q.bindValue(":memo", memo);
+    q.bindValue(":id", id);
+
+    if (!q.exec() || q.numRowsAffected() == 0)
+    {
+        qWarning() << "[DB] updateMetadata failed:" << q.lastError().text()
+                   << "id=" << id;
+        return false;
+    }
+    return true;
+}
+
 bool DatabaseManager::setResumePos(int id, double seconds)
 {
     if (!m_initialized)
@@ -284,24 +318,45 @@ bool DatabaseManager::removeMediaFile(int id)
     if (!m_initialized)
         return false;
 
-    // Delete the row's bookmarks first so they don't orphan (there is no
-    // ON DELETE CASCADE / foreign-key enforcement on this connection).
+    if (!m_db.transaction())
+    {
+        qWarning() << "[DB] removeMediaFile: begin transaction failed:"
+                   << m_db.lastError().text();
+        return false;
+    }
+
+    // Explicit deletion also covers databases created before the foreign-key
+    // clause was added. Both statements are one transaction, so a failure
+    // can never leave an orphaned or half-deleted playlist entry.
     {
         QSqlQuery bm(m_db);
         bm.prepare("DELETE FROM bookmarks WHERE media_id = :id");
         bm.bindValue(":id", id);
         if (!bm.exec())
+        {
             qWarning() << "[DB] removeMediaFile: delete bookmarks failed:"
                        << bm.lastError().text();
+            m_db.rollback();
+            return false;
+        }
     }
 
     QSqlQuery q(m_db);
     q.prepare("DELETE FROM media_files WHERE id = :id");
     q.bindValue(":id", id);
 
-    if (!q.exec())
+    if (!q.exec() || q.numRowsAffected() == 0)
     {
         qWarning() << "[DB] removeMediaFile failed:" << q.lastError().text();
+        m_db.rollback();
+        return false;
+    }
+
+    if (!m_db.commit())
+    {
+        qWarning() << "[DB] removeMediaFile: commit failed:"
+                   << m_db.lastError().text();
+        m_db.rollback();
         return false;
     }
     return true;

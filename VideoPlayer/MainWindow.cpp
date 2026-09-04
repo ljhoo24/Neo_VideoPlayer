@@ -67,6 +67,10 @@
 #include <QFont>
 #include <QFontMetrics>
 #include <QPointF>
+#include <QPointer>
+#include <QTemporaryDir>
+#include <QSaveFile>
+#include <QUuid>
 
 #include <algorithm>
 #include <array>
@@ -78,6 +82,47 @@
 // ============================================================
 // File-scope helpers
 // ============================================================
+
+static bool sameLocalPath(const QString& lhs, const QString& rhs)
+{
+    if (lhs.isEmpty() || rhs.isEmpty())
+        return false;
+
+    const QString left = QDir::cleanPath(QFileInfo(lhs).absoluteFilePath());
+    const QString right = QDir::cleanPath(QFileInfo(rhs).absoluteFilePath());
+#ifdef Q_OS_WIN
+    return left.compare(right, Qt::CaseInsensitive) == 0;
+#else
+    return left == right;
+#endif
+}
+
+// Copy a completed capture into place without exposing a partially-written
+// thumbnail to the model/view. QSaveFile commits by atomic rename where the
+// platform supports it and leaves the previous thumbnail intact on failure.
+static bool replaceFileAtomically(const QString& source,
+                                  const QString& destination)
+{
+    QFile input(source);
+    if (!input.open(QIODevice::ReadOnly))
+        return false;
+
+    QSaveFile output(destination);
+    if (!output.open(QIODevice::WriteOnly))
+        return false;
+
+    constexpr qint64 chunkSize = 256 * 1024;
+    while (!input.atEnd())
+    {
+        const QByteArray chunk = input.read(chunkSize);
+        if (chunk.isEmpty() && input.error() != QFileDevice::NoError)
+            return false;
+        if (output.write(chunk) != chunk.size())
+            return false;
+    }
+
+    return output.commit();
+}
 
 // ------------------------------------------------------------
 // AbsoluteSliderStyle
@@ -456,7 +501,9 @@ class IndexSheetGenerator final
     : public std::enable_shared_from_this<IndexSheetGenerator>
 {
 public:
-    using DoneCallback = std::function<void(bool success, const QString& outputPath)>;
+    using DoneCallback = std::function<void(bool success,
+                                            bool cancelled,
+                                            const QString& outputPath)>;
 
     IndexSheetGenerator(MpvPlayerWidget* mpv,
                         QString          videoPath,
@@ -468,37 +515,60 @@ public:
         , m_done(std::move(done))
     {}
 
-    // Kick off the capture chain.  Returns immediately; the done
-    // callback fires when the JPEG has been written (or on failure).
+    // Kick off the capture chain. Returns immediately. Every delayed step
+    // is tied to the mpv QWidget's QObject lifetime and verifies that the
+    // same file is still loaded before touching player state.
     void start()
     {
-        m_duration = m_mpv ? m_mpv->duration() : 0.0;
-        m_videoW   = m_mpv ? m_mpv->videoWidth()  : 0;
-        m_videoH   = m_mpv ? m_mpv->videoHeight() : 0;
-        m_codec    = m_mpv ? m_mpv->videoCodec()  : QString{};
-        m_fileSize = QFileInfo(m_videoPath).size();
-
-        if (m_duration <= 0.0 || m_videoW <= 0 || m_videoH <= 0)
+        if (!isExpectedFile())
         {
-            qWarning() << "[IndexSheet] missing metadata — duration="
-                       << m_duration << " size=" << m_videoW << "x" << m_videoH;
-            finish(false);
+            qWarning() << "[IndexSheet] requested file is not the loaded file:"
+                       << m_videoPath << "loaded="
+                       << (m_mpv ? m_mpv->currentFilePath() : QString{});
+            finish(false, false, false);
             return;
         }
 
-        // Per-pid temp dir so concurrent player instances don't trash
-        // each other's intermediates.
-        m_tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
-                  + QStringLiteral("/videoplayer_indexsheet_")
-                  + QString::number(QCoreApplication::applicationPid());
-        QDir().mkpath(m_tempDir);
+        m_duration = m_mpv->duration();
+        m_videoW   = m_mpv->videoWidth();
+        m_videoH   = m_mpv->videoHeight();
+        m_codec    = m_mpv->videoCodec();
+        m_fileSize = QFileInfo(m_videoPath).size();
 
-        // Pause before stepping through the frames so the user's last
-        // play position isn't fighting our seeks.
-        if (m_mpv && !m_mpv->isPaused())
-            m_mpv->togglePause();
+        if (!std::isfinite(m_duration) || m_duration <= 0.0
+            || m_videoW <= 0 || m_videoH <= 0)
+        {
+            qWarning() << "[IndexSheet] missing metadata — duration="
+                       << m_duration << " size=" << m_videoW << "x" << m_videoH;
+            finish(false, false, false);
+            return;
+        }
+
+        const QString tempPattern =
+            QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+                .filePath(QStringLiteral("videoplayer_indexsheet_XXXXXX"));
+        m_tempDir = std::make_unique<QTemporaryDir>(tempPattern);
+        if (!m_tempDir->isValid())
+        {
+            qWarning() << "[IndexSheet] failed to create temporary directory:"
+                       << m_tempDir->errorString();
+            finish(false, false, false);
+            return;
+        }
+
+        m_originalPosition = m_mpv->position();
+        m_wasPaused        = m_mpv->isPaused();
+        m_mpv->setPaused(true);
 
         captureNext();
+    }
+
+    void cancel(bool restorePlayback = true)
+    {
+        if (m_finished)
+            return;
+        m_cancelled = true;
+        finish(false, true, restorePlayback);
     }
 
 private:
@@ -512,6 +582,14 @@ private:
     // ── async capture loop ──
     void captureNext()
     {
+        if (m_finished || m_cancelled)
+            return;
+        if (!isExpectedFile())
+        {
+            finish(false, true, false);
+            return;
+        }
+
         if (m_idx >= FRAME_COUNT)
         {
             compose();
@@ -526,33 +604,103 @@ private:
         const double pos  = m_duration * frac;
         m_timestamps.push_back(pos);
 
-        const QString framePath = QStringLiteral("%1/frame_%2.png")
-                                  .arg(m_tempDir)
-                                  .arg(m_idx, 2, 10, QChar('0'));
+        const QString framePath = m_tempDir->filePath(
+            QStringLiteral("frame_%1.png").arg(m_idx, 2, 10, QChar('0')));
         m_framePaths.push_back(framePath);
 
-        if (m_mpv)
-            m_mpv->seek(pos);
+        m_mpv->seek(pos);
+        waitForSeek(pos, framePath, 0);
+    }
 
-        // seek → wait for decoder to render the target frame →
-        // screenshot → wait for file to flush → advance.
-        auto self = shared_from_this();
-        QTimer::singleShot(350, qApp, [self, framePath]()
+    void waitForSeek(double target, const QString& framePath, int attempt)
+    {
+        if (m_finished || m_cancelled)
+            return;
+        if (!isExpectedFile())
         {
-            if (self->m_mpv)
-                self->m_mpv->takeScreenshot(framePath);
+            finish(false, true, false);
+            return;
+        }
 
-            QTimer::singleShot(450, qApp, [self]()
+        // mpv property updates are asynchronous. Wait until time-pos reaches
+        // the requested frame instead of assuming every decoder finishes in a
+        // fixed 350 ms window.
+        if (std::abs(m_mpv->position() - target) > 0.75)
+        {
+            if (attempt >= 30)
             {
-                ++self->m_idx;
-                self->captureNext();
-            });
+                qWarning() << "[IndexSheet] seek timed out at" << target;
+                finish(false, false, true);
+                return;
+            }
+            auto self = shared_from_this();
+            QTimer::singleShot(100, m_mpv.data(),
+                [self, target, framePath, attempt]() {
+                    self->waitForSeek(target, framePath, attempt + 1);
+                });
+            return;
+        }
+
+        auto self = shared_from_this();
+        QTimer::singleShot(120, m_mpv.data(), [self, framePath]()
+        {
+            if (self->m_finished || self->m_cancelled)
+                return;
+            if (!self->isExpectedFile())
+            {
+                self->finish(false, true, false);
+                return;
+            }
+            if (!self->m_mpv->takeScreenshot(framePath))
+            {
+                self->finish(false, false, true);
+                return;
+            }
+            self->waitForFrame(framePath, 0);
+        });
+    }
+
+    void waitForFrame(const QString& framePath, int attempt)
+    {
+        if (m_finished || m_cancelled)
+            return;
+        if (!isExpectedFile())
+        {
+            finish(false, true, false);
+            return;
+        }
+
+        const QImage frame(framePath);
+        if (!frame.isNull())
+        {
+            ++m_idx;
+            captureNext();
+            return;
+        }
+
+        if (attempt >= 30)
+        {
+            qWarning() << "[IndexSheet] screenshot timed out:" << framePath;
+            finish(false, false, true);
+            return;
+        }
+
+        auto self = shared_from_this();
+        QTimer::singleShot(100, m_mpv.data(), [self, framePath, attempt]()
+        {
+            self->waitForFrame(framePath, attempt + 1);
         });
     }
 
     // ── composite the captured frames into the final JPEG ──
     void compose()
     {
+        if (m_finished || m_cancelled || !isExpectedFile())
+        {
+            finish(false, true, false);
+            return;
+        }
+
         const int cell_w   = TARGET_WIDTH / COLS;
         const int cell_h   = static_cast<int>(
             static_cast<double>(cell_w) * m_videoH / m_videoW);
@@ -616,20 +764,17 @@ private:
             QImage frame(m_framePaths[i]);
             if (frame.isNull())
             {
-                // Missing capture — fall back to a flat dark cell so
-                // the grid is still complete and the layout doesn't
-                // collapse around the gap.
-                QImage placeholder(cell_w, cell_h, QImage::Format_RGB32);
-                placeholder.fill(QColor(40, 40, 40));
-                p.drawImage(x, y, placeholder);
+                p.end();
+                qWarning() << "[IndexSheet] captured frame is unreadable:"
+                           << m_framePaths[i];
+                finish(false, false, true);
+                return;
             }
-            else
-            {
-                const QImage scaled = frame.scaled(
-                    cell_w, cell_h,
-                    Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-                p.drawImage(x, y, scaled);
-            }
+
+            const QImage scaled = frame.scaled(
+                cell_w, cell_h,
+                Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            p.drawImage(x, y, scaled);
 
             // Timestamp overlay — right-bottom anchored, with an
             // 8-direction black outline (matches PIL's _OUTLINE_OFFSETS).
@@ -653,18 +798,42 @@ private:
         if (!saved)
             qWarning() << "[IndexSheet] failed to save JPEG to" << m_outputPath;
 
-        // Best-effort cleanup of the per-pid temp directory.
-        for (const QString& f : std::as_const(m_framePaths))
-            QFile::remove(f);
-        QDir().rmdir(m_tempDir);
-
-        finish(saved);
+        finish(saved, false, true);
     }
 
-    void finish(bool success)
+    bool isExpectedFile() const
     {
+        if (!m_mpv || !m_mpv->hasFile())
+            return false;
+
+        const QString expected = QDir::cleanPath(
+            QFileInfo(m_videoPath).absoluteFilePath());
+        const QString actual = QDir::cleanPath(
+            QFileInfo(m_mpv->currentFilePath()).absoluteFilePath());
+#ifdef Q_OS_WIN
+        return expected.compare(actual, Qt::CaseInsensitive) == 0;
+#else
+        return expected == actual;
+#endif
+    }
+
+    void finish(bool success, bool cancelled, bool restorePlayback)
+    {
+        if (m_finished)
+            return;
+        m_finished = true;
+
+        if (restorePlayback && isExpectedFile())
+        {
+            m_mpv->seek(m_originalPosition);
+            m_mpv->setPaused(m_wasPaused);
+        }
+
         if (m_done)
-            m_done(success, m_outputPath);
+        {
+            auto done = std::move(m_done);
+            done(success, cancelled, m_outputPath);
+        }
     }
 
     // ── formatting helpers — mirror reference/index_sheet.py ──
@@ -712,16 +881,20 @@ private:
     }};
 
     // ── inputs / outputs ──
-    MpvPlayerWidget* m_mpv{nullptr};
+    QPointer<MpvPlayerWidget> m_mpv;
     QString          m_videoPath;
     QString          m_outputPath;
     DoneCallback     m_done;
 
     // ── transient state during capture ──
-    QString          m_tempDir;
+    std::unique_ptr<QTemporaryDir> m_tempDir;
     QStringList      m_framePaths;
     QList<double>    m_timestamps;
     int              m_idx{0};
+    bool             m_cancelled{false};
+    bool             m_finished{false};
+    bool             m_wasPaused{true};
+    double           m_originalPosition{0.0};
 
     // ── cached metadata (gathered once at start) ──
     int     m_videoW{0};
@@ -839,6 +1012,7 @@ MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
     setWindowTitle("VideoPlayer");
+    setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(980, 620);
     resize(1280, 720);
 
@@ -854,6 +1028,11 @@ MainWindow::MainWindow(QWidget* parent)
     loadShortcuts();    // override defaults with any persisted values
     setupMenuBar();     // populate menu bar with the actions
     setupConnections();
+
+    // Keep the window itself as the neutral shortcut focus target. Without
+    // this, QLineEdit (the first focusable child) becomes the implicit focus
+    // widget and consumes Left/Right after returning with Alt+Tab.
+    setFocus(Qt::OtherFocusReason);
 
     // Mouse-wheel events are routed by cursor position in eventFilter().
     // Install the filter application-wide so we see the wheel no matter
@@ -1131,6 +1310,9 @@ QWidget* MainWindow::buildLeftPanel()
 
     m_searchEdit = new QLineEdit;
     m_searchEdit->setPlaceholderText("제목 검색…");
+    // Searching remains one-click away, but the field is no longer selected
+    // merely because it is the first widget in the tab chain.
+    m_searchEdit->setFocusPolicy(Qt::ClickFocus);
     m_searchEdit->setClearButtonEnabled(true);
     m_searchEdit->addAction(Icons::icon(Icons::Search, ThemeManager::iconMuted(), 18),
                             QLineEdit::LeadingPosition);
@@ -1412,7 +1594,13 @@ QWidget* MainWindow::buildControlsBar()
     m_seekSlider->setFocusPolicy(Qt::NoFocus);
     // Click-on-groove = jump-to-here (absolute), not pageStep nudge.
     {
-        auto* proxy = new AbsoluteSliderStyle(m_seekSlider->style());
+        // QProxyStyle(QStyle*) takes ownership of the supplied style.  The
+        // widget currently inherits QApplication's global style, so passing
+        // m_seekSlider->style() here would transfer ownership of that shared
+        // object to this one slider.  Create an independent base-style
+        // instance by key instead.
+        auto* proxy = new AbsoluteSliderStyle(
+            QApplication::style()->name());
         proxy->setParent(m_seekSlider);
         m_seekSlider->setStyle(proxy);
     }
@@ -1719,6 +1907,10 @@ void MainWindow::setupConnections()
                 // Re-apply persisted aspect/rotate/deinterlace so the
                 // user's saved choices stick on the freshly-loaded file.
                 applyVideoAdjustments();
+
+                if (m_pendingAutoThumbnailId != 0)
+                    QTimer::singleShot(100, this,
+                        &MainWindow::tryStartPendingAutoThumbnail);
             });
 
     // ---- Mouse gestures over the video ----
@@ -1961,25 +2153,33 @@ void MainWindow::onRemoveSelected()
     if (ans != QMessageBox::Yes)
         return;
 
-    // If the currently-playing item is about to disappear, stop mpv
-    // first so it doesn't keep a file handle on a now-deleted entry.
     if (m_playingItem.has_value()
         && idsToRemove.contains(m_playingItem->id))
+        cancelAutoThumbnailJob(true);
+
+    int removed = 0;
+    QList<int> removedIds;
+    for (int id : idsToRemove)
+    {
+        if (m_db.removeMediaFile(id))
+        {
+            ++removed;
+            removedIds.append(id);
+        }
+    }
+
+    // Change playback/selection state only for rows the DB really removed.
+    // A failed delete must not make an existing row appear lost in memory.
+    if (m_playingItem.has_value()
+        && removedIds.contains(m_playingItem->id))
     {
         m_mpvWidget->stop();
         m_playingItem.reset();
     }
     if (m_currentItem.has_value()
-        && idsToRemove.contains(m_currentItem->id))
+        && removedIds.contains(m_currentItem->id))
     {
         m_currentItem.reset();
-    }
-
-    int removed = 0;
-    for (int id : idsToRemove)
-    {
-        if (m_db.removeMediaFile(id))
-            ++removed;
     }
 
     refreshPlaylist();
@@ -2046,8 +2246,12 @@ void MainWindow::onSaveMetadata()
     const int     rating = m_ratingSpinBox->value();
     const QString memo   = m_memoEdit->toPlainText();
 
-    (void)m_db.updateRating(m_currentItem->id, rating);
-    (void)m_db.updateMemo(m_currentItem->id, memo);
+    if (!m_db.updateMetadata(m_currentItem->id, rating, memo))
+    {
+        QMessageBox::warning(this, "저장 실패",
+            "평점과 메모를 데이터베이스에 저장하지 못했습니다.");
+        return;
+    }
 
     m_currentItem->rating = rating;
     m_currentItem->memo   = memo;
@@ -2101,10 +2305,15 @@ void MainWindow::onAddBookmark()
 
     const double pos = m_mpvWidget->position();
 
-    // Optional note. Cancel still adds with an empty note (simplest path).
+    // The note is optional, but Cancel means the entire add operation was
+    // cancelled—not "add a bookmark with an empty note".
+    bool accepted = false;
     const QString note = QInputDialog::getText(
         this, "북마크 추가",
-        QStringLiteral("%1 위치에 메모 (선택):").arg(formatTime(pos)));
+        QStringLiteral("%1 위치에 메모 (선택):").arg(formatTime(pos)),
+        QLineEdit::Normal, QString{}, &accepted);
+    if (!accepted)
+        return;
 
     const int id = m_db.addBookmark(m_playingItem->id, pos, note);
     if (id < 0)
@@ -2189,6 +2398,11 @@ void MainWindow::createActions()
         auto* a = new QAction(text, this);
         a->setObjectName(id);
         a->setShortcut(defSc);
+        // Preserve the compile-time default before loadShortcuts() applies a
+        // persisted override. OptionsDialog uses this immutable value for
+        // "기본값 복원" instead of snapshotting the already-customized key.
+        a->setProperty("defaultShortcut",
+            defSc.toString(QKeySequence::PortableText));
         a->setShortcutContext(Qt::WindowShortcut);
         connect(a, &QAction::triggered, this, slot);
         addAction(a);                         // register on window
@@ -3175,7 +3389,8 @@ void MainWindow::onPositionChanged(double seconds)
     // playback reaches B or somehow lands before A. Done before the
     // slider update so the handle doesn't visibly overshoot past B.
     // Skipped while the user is actively dragging the seek slider.
-    if (!m_userSeeking && m_pointA.has_value() && m_pointB.has_value()
+    if (!m_userSeeking && !m_indexSheetJob
+        && m_pointA.has_value() && m_pointB.has_value()
         && *m_pointB > *m_pointA + 0.2
         && (seconds >= *m_pointB || seconds < *m_pointA))
     {
@@ -3225,7 +3440,7 @@ void MainWindow::onFileEnded()
     case RepeatMode::One:
         // 재생 중이던 파일 처음부터 다시 재생 (선택 항목이 아니라)
         if (m_playingItem.has_value())
-            m_mpvWidget->loadFile(m_playingItem->filePath);
+            (void)m_mpvWidget->loadFile(m_playingItem->filePath);
         break;
 
     case RepeatMode::All:
@@ -3268,34 +3483,138 @@ void MainWindow::onSeekSliderReleased()
 
 void MainWindow::onTakeScreenshot()
 {
-    if (!m_currentItem.has_value())
+    if (m_screenshotPending)
+    {
+        statusBar()->showMessage("이미 썸네일 캡처가 진행 중입니다", 2500);
+        return;
+    }
+
+    if (!m_playingItem.has_value() || !m_mpvWidget->hasFile()
+        || !sameLocalPath(m_playingItem->filePath,
+                          m_mpvWidget->currentFilePath()))
     {
         QMessageBox::information(this, "No Selection",
             "Select and play a video first.");
         return;
     }
 
+    // Bind every asynchronous step to the item that is actually playing.
+    // Playlist selection can change freely while mpv writes the image.
+    const int mediaId = m_playingItem->id;
+    const QString videoPath = m_playingItem->filePath;
+
     const QString thumbDir = QStandardPaths::writableLocation(
         QStandardPaths::AppDataLocation) + "/thumbnails";
-    QDir().mkpath(thumbDir);
-
-    const QString thumbPath = QString("%1/%2.jpg")
-        .arg(thumbDir)
-        .arg(m_currentItem->id);
-
-    m_mpvWidget->takeScreenshot(thumbPath);
-
-    // The screenshot command is asynchronous — wait briefly then update the DB
-    QTimer::singleShot(600, this, [this, thumbPath]()
+    if (!QDir().mkpath(thumbDir))
     {
-        if (!m_currentItem.has_value())
-            return;
+        QMessageBox::warning(this, "저장 실패",
+            "썸네일 저장 폴더를 만들지 못했습니다.");
+        return;
+    }
 
-        (void)m_db.updateThumbnail(m_currentItem->id, thumbPath);
-        m_currentItem->thumbnailPath = thumbPath;
-        m_playlistModel->updateItem(*m_currentItem);
-        updateThumbnailDisplay(thumbPath);
-    });
+    const QString finalPath = QString("%1/%2.jpg")
+        .arg(thumbDir)
+        .arg(mediaId);
+    const QString temporaryPath = QString("%1/%2-capture-%3.jpg")
+        .arg(thumbDir)
+        .arg(mediaId)
+        .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+
+    m_screenshotPending = true;
+    m_screenshotButton->setEnabled(false);
+    statusBar()->showMessage("현재 프레임 캡처 중…", 0);
+
+    if (!m_mpvWidget->takeScreenshot(temporaryPath))
+    {
+        m_screenshotPending = false;
+        m_screenshotButton->setEnabled(true);
+        statusBar()->clearMessage();
+        QMessageBox::warning(this, "캡처 실패",
+            "mpv가 스크린샷 명령을 처리하지 못했습니다.");
+        return;
+    }
+
+    pollScreenshotResult(mediaId, videoPath, temporaryPath, finalPath, 0);
+}
+
+void MainWindow::pollScreenshotResult(int mediaId,
+                                      const QString& expectedVideoPath,
+                                      const QString& temporaryPath,
+                                      const QString& finalPath,
+                                      int attempt)
+{
+    const auto finish = [this]() {
+        m_screenshotPending = false;
+        m_screenshotButton->setEnabled(true);
+        statusBar()->clearMessage();
+    };
+
+    if (!m_mpvWidget->hasFile()
+        || !sameLocalPath(expectedVideoPath, m_mpvWidget->currentFilePath()))
+    {
+        QFile::remove(temporaryPath);
+        finish();
+        statusBar()->showMessage(
+            "재생 파일이 바뀌어 썸네일 캡처를 취소했습니다", 3000);
+        return;
+    }
+
+    const QImage captured(temporaryPath);
+    if (!captured.isNull())
+    {
+        const bool stored = replaceFileAtomically(temporaryPath, finalPath);
+        QFile::remove(temporaryPath);
+
+        if (!stored || !m_db.updateThumbnail(mediaId, finalPath))
+        {
+            finish();
+            QMessageBox::warning(this, "저장 실패",
+                "캡처한 썸네일을 안전하게 저장하지 못했습니다.");
+            return;
+        }
+
+        applyThumbnailResult(mediaId, finalPath);
+        finish();
+        statusBar()->showMessage("현재 프레임을 썸네일로 저장했습니다", 2500);
+        return;
+    }
+
+    if (attempt >= 30)
+    {
+        QFile::remove(temporaryPath);
+        finish();
+        QMessageBox::warning(this, "캡처 실패",
+            "스크린샷 파일 생성 시간이 초과되었습니다.");
+        return;
+    }
+
+    QTimer::singleShot(100, this,
+        [this, mediaId, expectedVideoPath, temporaryPath, finalPath, attempt]() {
+            pollScreenshotResult(mediaId, expectedVideoPath, temporaryPath,
+                                 finalPath, attempt + 1);
+        });
+}
+
+void MainWindow::applyThumbnailResult(int mediaId, const QString& path)
+{
+    auto item = m_db.getMediaById(mediaId);
+    if (!item.has_value())
+        return;
+
+    item->thumbnailPath = path;
+    m_playlistModel->updateItem(*item);
+
+    if (m_currentItem.has_value() && m_currentItem->id == mediaId)
+    {
+        m_currentItem = item;
+        updateThumbnailDisplay(path);
+    }
+    if (m_playingItem.has_value() && m_playingItem->id == mediaId)
+    {
+        m_playingItem->thumbnailPath = path;
+        m_seekPreviewSheetPath.clear();
+        refreshSeekPreviewSheet();
+    }
 }
 
 // ============================================================
@@ -3328,6 +3647,13 @@ void MainWindow::onImportThumbnail()
     if (src.isEmpty())
         return;
 
+    if (QImage(src).isNull())
+    {
+        QMessageBox::warning(this, "가져오기 실패",
+            "선택한 파일을 이미지로 읽을 수 없습니다.");
+        return;
+    }
+
     s.setValue("dialog/lastThumbDir", QFileInfo(src).absolutePath());
 
     // 앱 전용 thumbnails 폴더에 복사 (원본 경로 의존성 제거)
@@ -3341,27 +3667,26 @@ void MainWindow::onImportThumbnail()
         .arg(m_currentItem->id)
         .arg(ext.isEmpty() ? "jpg" : ext);
 
+    QString storedPath = destPath;
     // 같은 경로면 복사 불필요
-    if (src != destPath)
+    if (!sameLocalPath(src, destPath))
     {
-        QFile::remove(destPath);
-        if (!QFile::copy(src, destPath))
+        if (!replaceFileAtomically(src, destPath))
         {
             QMessageBox::warning(this, "복사 실패",
                 "이미지 파일을 복사하지 못했습니다.\n원본 경로를 직접 사용합니다.");
-            // 복사 실패 시 원본 경로 그대로 저장
-            (void)m_db.updateThumbnail(m_currentItem->id, src);
-            m_currentItem->thumbnailPath = src;
-            m_playlistModel->updateItem(*m_currentItem);
-            updateThumbnailDisplay(src);
-            return;
+            storedPath = src;
         }
     }
 
-    (void)m_db.updateThumbnail(m_currentItem->id, destPath);
-    m_currentItem->thumbnailPath = destPath;
-    m_playlistModel->updateItem(*m_currentItem);
-    updateThumbnailDisplay(destPath);
+    const int mediaId = m_currentItem->id;
+    if (!m_db.updateThumbnail(mediaId, storedPath))
+    {
+        QMessageBox::warning(this, "저장 실패",
+            "썸네일 경로를 데이터베이스에 저장하지 못했습니다.");
+        return;
+    }
+    applyThumbnailResult(mediaId, storedPath);
 }
 
 // ============================================================
@@ -3377,6 +3702,12 @@ void MainWindow::onImportThumbnail()
 
 void MainWindow::onAutoThumbnail()
 {
+    if (m_indexSheetJob || m_pendingAutoThumbnailId != 0)
+    {
+        statusBar()->showMessage("이미 인덱스 시트 생성이 진행 중입니다", 2500);
+        return;
+    }
+
     if (!m_currentItem.has_value())
     {
         QMessageBox::information(this, "선택 없음",
@@ -3384,65 +3715,168 @@ void MainWindow::onAutoThumbnail()
         return;
     }
 
-    const double dur = m_mpvWidget->duration();
-    if (dur <= 0.0)
+    const int requestedId = m_currentItem->id;
+    const int row = m_playlistModel->rowForId(requestedId);
+    if (row < 0)
     {
-        // No video loaded yet — load it and retry once the decoder
-        // has reported a duration.  Same recovery as the previous
-        // single-frame implementation.
-        m_mpvWidget->loadFile(m_currentItem->filePath);
-        QTimer::singleShot(1500, this, &MainWindow::onAutoThumbnail);
+        QMessageBox::warning(this, "생성 실패",
+            "선택한 영상을 플레이리스트에서 찾지 못했습니다.");
+        return;
+    }
+
+    // The generator seeks through the active decoder, so make the requested
+    // item the actual playback item first. fileLoaded will wake the pending
+    // job once mpv has reliable duration/dimension metadata.
+    const bool alreadyLoaded =
+        m_playingItem.has_value() && m_playingItem->id == requestedId
+        && m_mpvWidget->hasFile()
+        && sameLocalPath(m_currentItem->filePath,
+                         m_mpvWidget->currentFilePath());
+    if (!alreadyLoaded)
+        playItemAtRow(row);
+
+    m_pendingAutoThumbnailId = requestedId;
+    m_pendingAutoThumbnailAttempts = 0;
+    m_autoThumbButton->setEnabled(false);
+    statusBar()->showMessage("인덱스 시트 생성 준비 중…", 0);
+    tryStartPendingAutoThumbnail();
+}
+
+void MainWindow::tryStartPendingAutoThumbnail()
+{
+    if (m_pendingAutoThumbnailId == 0 || m_indexSheetJob)
+        return;
+
+    const int mediaId = m_pendingAutoThumbnailId;
+    const auto item = m_db.getMediaById(mediaId);
+    if (!item.has_value())
+    {
+        m_pendingAutoThumbnailId = 0;
+        m_autoThumbButton->setEnabled(true);
+        statusBar()->clearMessage();
+        QMessageBox::warning(this, "생성 실패",
+            "선택한 영상 정보를 다시 불러오지 못했습니다.");
+        return;
+    }
+
+    const bool expectedLoaded =
+        m_playingItem.has_value() && m_playingItem->id == mediaId
+        && m_mpvWidget->hasFile()
+        && sameLocalPath(item->filePath, m_mpvWidget->currentFilePath());
+    const bool metadataReady =
+        std::isfinite(m_mpvWidget->duration())
+        && m_mpvWidget->duration() > 0.0
+        && m_mpvWidget->videoWidth() > 0
+        && m_mpvWidget->videoHeight() > 0;
+
+    if (!expectedLoaded || !metadataReady)
+    {
+        if (++m_pendingAutoThumbnailAttempts <= 50)
+        {
+            QTimer::singleShot(200, this,
+                &MainWindow::tryStartPendingAutoThumbnail);
+            return;
+        }
+
+        m_pendingAutoThumbnailId = 0;
+        m_pendingAutoThumbnailAttempts = 0;
+        m_autoThumbButton->setEnabled(true);
+        statusBar()->clearMessage();
+        QMessageBox::warning(this, "생성 실패",
+            "영상 로딩 시간이 초과되어 인덱스 시트를 만들지 못했습니다.");
         return;
     }
 
     const QString thumbDir = QStandardPaths::writableLocation(
         QStandardPaths::AppDataLocation) + "/thumbnails";
-    QDir().mkpath(thumbDir);
+    if (!QDir().mkpath(thumbDir))
+    {
+        m_pendingAutoThumbnailId = 0;
+        m_autoThumbButton->setEnabled(true);
+        statusBar()->clearMessage();
+        QMessageBox::warning(this, "생성 실패",
+            "썸네일 저장 폴더를 만들지 못했습니다.");
+        return;
+    }
 
-    const QString thumbPath = QString("%1/%2.jpg")
+    const QString finalPath = QString("%1/%2.jpg")
         .arg(thumbDir)
-        .arg(m_currentItem->id);
+        .arg(mediaId);
+    const QString temporaryPath = QString("%1/%2-index-%3.jpg")
+        .arg(thumbDir)
+        .arg(mediaId)
+        .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
 
-    // Capture the id by value — the user can swap playlist
-    // selection while the chain is running, and we want the
-    // result to land on the video that was selected when the
-    // user clicked Auto Thumbnail.
-    const int currentId = m_currentItem->id;
-
+    m_pendingAutoThumbnailId = 0;
+    m_pendingAutoThumbnailAttempts = 0;
     statusBar()->showMessage("인덱스 시트 생성 중…", 0);
 
-    auto gen = std::make_shared<IndexSheetGenerator>(
+    const QString videoPath = item->filePath;
+    const QPointer<MainWindow> guard(this);
+    auto job = std::make_shared<IndexSheetGenerator>(
         m_mpvWidget,
-        m_currentItem->filePath,
-        thumbPath,
-        [this, currentId, thumbPath](bool ok, const QString& outPath)
+        videoPath,
+        temporaryPath,
+        [guard, mediaId, finalPath](bool ok,
+                                    bool cancelled,
+                                    const QString& outPath)
         {
-            statusBar()->clearMessage();
+            if (!guard)
+            {
+                QFile::remove(outPath);
+                return;
+            }
+
+            guard->m_indexSheetJob.reset();
+            guard->m_autoThumbButton->setEnabled(true);
+            guard->statusBar()->clearMessage();
+
+            if (cancelled)
+            {
+                QFile::remove(outPath);
+                guard->statusBar()->showMessage(
+                    "재생 파일이 바뀌어 인덱스 시트 생성을 취소했습니다", 3000);
+                return;
+            }
 
             if (!ok)
             {
-                QMessageBox::warning(this, "생성 실패",
+                QFile::remove(outPath);
+                QMessageBox::warning(guard, "생성 실패",
                     "인덱스 시트 생성에 실패했습니다.\n"
                     "로그 파일을 확인하세요.");
                 return;
             }
 
-            (void)m_db.updateThumbnail(currentId, outPath);
-
-            // Refresh the UI only if the user is still on the same
-            // playlist row.  If they navigated away, the DB update
-            // is enough — the new sheet will appear next time they
-            // select this video.
-            if (m_currentItem.has_value() && m_currentItem->id == currentId)
+            const bool stored = replaceFileAtomically(outPath, finalPath);
+            QFile::remove(outPath);
+            if (!stored || !guard->m_db.updateThumbnail(mediaId, finalPath))
             {
-                m_currentItem->thumbnailPath = outPath;
-                m_playlistModel->updateItem(*m_currentItem);
-                updateThumbnailDisplay(outPath);
+                QMessageBox::warning(guard, "저장 실패",
+                    "완성된 인덱스 시트를 안전하게 저장하지 못했습니다.");
+                return;
             }
 
-            qDebug() << "[IndexSheet] saved" << outPath;
+            guard->applyThumbnailResult(mediaId, finalPath);
+            guard->statusBar()->showMessage("인덱스 시트를 저장했습니다", 2500);
+            qDebug() << "[IndexSheet] saved" << finalPath;
         });
-    gen->start();
+    m_indexSheetJob = job;
+    job->start();
+}
+
+void MainWindow::cancelAutoThumbnailJob(bool restorePlayback)
+{
+    m_pendingAutoThumbnailId = 0;
+    m_pendingAutoThumbnailAttempts = 0;
+
+    if (m_indexSheetJob)
+    {
+        const auto job = m_indexSheetJob;
+        job->cancel(restorePlayback);
+    }
+    else if (m_autoThumbButton)
+        m_autoThumbButton->setEnabled(true);
 }
 
 // ============================================================
@@ -3451,6 +3885,17 @@ void MainWindow::onAutoThumbnail()
 
 bool MainWindow::eventFilter(QObject* obj, QEvent* event)
 {
+    // Returning from Alt+Tab must restore a neutral focus target. If search
+    // had focus, Left/Right would edit its caret instead of firing the
+    // window-scoped video navigation shortcuts.
+    if (obj == this && event->type() == QEvent::WindowActivate)
+    {
+        QTimer::singleShot(0, this, [this]() {
+            if (isActiveWindow() && m_searchEdit && m_searchEdit->hasFocus())
+                setFocus(Qt::ActiveWindowFocusReason);
+        });
+    }
+
     // Fullscreen OSD auto-show/hide: any mouse movement reveals BOTH the
     // bottom controls overlay and the top title overlay; the single-shot
     // m_fsHideTimer hides them together after a short idle period.
@@ -3512,7 +3957,10 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
     {
         if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove)
         {
-            auto* de = static_cast<QDragEnterEvent*>(event);
+            // QDragEnterEvent and QDragMoveEvent both derive QDropEvent.
+            // Casting a DragMove event to its sibling/derived enter type is
+            // undefined behaviour even though their APIs happen to overlap.
+            auto* de = static_cast<QDropEvent*>(event);
             if (de->mimeData()->hasUrls())
             {
                 de->acceptProposedAction();
@@ -3577,7 +4025,7 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
     {
         if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove)
         {
-            auto* de = static_cast<QDragEnterEvent*>(event);
+            auto* de = static_cast<QDropEvent*>(event);
             if (de->mimeData()->hasUrls())
             {
                 de->acceptProposedAction();
@@ -3883,8 +4331,11 @@ void MainWindow::flushPendingMetaEdits()
     const QString memo   = m_memoEdit->toPlainText();
     const int     id     = m_metaDirtyForId;
 
-    (void)m_db.updateRating(id, rating);
-    (void)m_db.updateMemo  (id, memo);
+    if (!m_db.updateMetadata(id, rating, memo))
+    {
+        statusBar()->showMessage("평점 / 메모 자동 저장에 실패했습니다", 3500);
+        return;   // retain dirty state so a later save can retry
+    }
 
     if (m_currentItem.has_value() && m_currentItem->id == id)
     {
@@ -3963,10 +4414,26 @@ void MainWindow::playItemAtRow(int row)
     if (!optItem.has_value())
         return;
 
+    // An index-sheet job temporarily owns playback position. Restore it
+    // before saving/switching, otherwise a capture seek can be persisted as
+    // the user's resume position for the outgoing video.
+    if (m_indexSheetJob)
+        cancelAutoThumbnailJob(true);
+    if (m_pendingAutoThumbnailId != 0
+        && m_pendingAutoThumbnailId != optItem->id)
+        cancelAutoThumbnailJob(false);
+
     // Was this same entry the one just playing? (Re-watch of the current
     // row — e.g. a double-click — where the model's resume_pos is stale.)
     const bool replayingSame =
         m_playingItem.has_value() && m_playingItem->id == optItem->id;
+
+    if (!replayingSame)
+    {
+        m_pointA.reset();
+        m_pointB.reset();
+        updateABButtons();
+    }
 
     // Save the OUTGOING file's position before we replace it.
     saveCurrentResumePos();
@@ -3984,7 +4451,6 @@ void MainWindow::playItemAtRow(int row)
         optItem->resumePos = m_playingItem->resumePos;
 
     m_currentItem = optItem;
-    m_playingItem = optItem;   // this row is now the playback queue anchor
     loadCurrentItem(*m_currentItem);
 
     // Arm a resume seek (applied once fileLoaded fires) when the option is
@@ -4003,7 +4469,16 @@ void MainWindow::playItemAtRow(int row)
             m_pendingResumePos = rp;
     }
 
-    m_mpvWidget->loadFile(m_currentItem->filePath);
+    if (!m_mpvWidget->loadFile(m_currentItem->filePath))
+    {
+        m_pendingResumePos = 0.0;
+        if (m_pendingAutoThumbnailId == m_currentItem->id)
+            cancelAutoThumbnailJob(false);
+        statusBar()->showMessage("영상을 불러오지 못했습니다", 3500);
+        return;
+    }
+
+    m_playingItem = optItem;   // this row is now the playback queue anchor
 
     // Remember this as the "last played" entry so the next launch can
     // restore the same selection. We save the id (stable across DB
@@ -4032,13 +4507,16 @@ void MainWindow::playItemAtRow(int row)
 void MainWindow::openExternalFile(const QString& path)
 {
     const QString abs = QFileInfo(path).absoluteFilePath();
-    if (abs.isEmpty() || !QFileInfo::exists(abs))
+    const QFileInfo fileInfo(abs);
+    if (abs.isEmpty() || !fileInfo.exists() || !fileInfo.isFile())
     {
         qWarning() << "[OpenFile] file not found:" << path;
         return;
     }
 
     qDebug() << "[OpenFile] external open request:" << abs;
+
+    cancelAutoThumbnailJob(true);
 
     // "이어보기": persist the position of whatever is currently playing
     // before we switch to the externally-opened file. The DB path below
@@ -4084,7 +4562,11 @@ void MainWindow::openExternalFile(const QString& path)
     // Play the file directly so the user still sees their video.
     m_currentItem.reset();
     m_playingItem.reset();
-    m_mpvWidget->loadFile(abs);
+    m_pointA.reset();
+    m_pointB.reset();
+    updateABButtons();
+    if (!m_mpvWidget->loadFile(abs))
+        statusBar()->showMessage("영상을 불러오지 못했습니다", 3500);
 }
 
 int MainWindow::currentPlaylistRow() const

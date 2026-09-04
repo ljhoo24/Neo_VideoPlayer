@@ -59,6 +59,7 @@ public:
                                     const QString& thumbnailPath = QLatin1String(""));
     [[nodiscard]] bool updateRating(int id, int rating);
     [[nodiscard]] bool updateMemo(int id, const QString& memo);
+    [[nodiscard]] bool updateMetadata(int id, int rating, const QString& memo);
     [[nodiscard]] bool setResumePos(int id, double seconds);
     [[nodiscard]] bool updateThumbnail(int id, const QString& thumbnailPath);
     [[nodiscard]] bool removeMediaFile(int id);

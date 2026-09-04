@@ -13,6 +13,7 @@
 #include <QTextStream>
 #include <QDateTime>
 #include <QMutex>
+#include <memory>
 #include <stdexcept>
 
 #include "MainWindow.h"
@@ -74,7 +75,16 @@ int main(int argc, char* argv[])
         const QString logDir = QStandardPaths::writableLocation(
             QStandardPaths::AppDataLocation);
         QDir().mkpath(logDir);
-        g_logFile.setFileName(logDir + "/app.log");
+        const QString logPath = logDir + "/app.log";
+        const QString oldLogPath = logDir + "/app.log.1";
+        constexpr qint64 maxLogBytes = 5 * 1024 * 1024;
+        if (QFileInfo(logPath).size() >= maxLogBytes)
+        {
+            QFile::remove(oldLogPath);
+            if (!QFile::rename(logPath, oldLogPath))
+                QFile::remove(logPath);
+        }
+        g_logFile.setFileName(logPath);
         g_logFile.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
     }
     qInstallMessageHandler(fileMessageHandler);
@@ -95,13 +105,18 @@ int main(int argc, char* argv[])
     //      hand the file path to it and exit instead of opening a 2nd
     //      window. The first instance adds + plays it. ----
     const QString kIpcServerName = QStringLiteral("VideoPlayer.SingleInstance.CustomMedia");
+    constexpr qint64 kMaxIpcPayload = 256 * 1024;
     {
         QLocalSocket probe;
         probe.connectToServer(kIpcServerName);
         if (probe.waitForConnected(300))
         {
             qDebug() << "[SingleInstance] existing instance found — forwarding:" << openPath;
-            probe.write(openPath.toUtf8());
+            const QByteArray payload = openPath.toUtf8();
+            if (payload.size() <= kMaxIpcPayload)
+                probe.write(payload);
+            else
+                qWarning() << "[SingleInstance] path exceeds IPC limit";
             probe.flush();
             probe.waitForBytesWritten(1000);
             probe.disconnectFromServer();
@@ -126,6 +141,8 @@ int main(int argc, char* argv[])
         // by a crashed previous run, then listen for forwarded paths.
         QLocalServer ipcServer;
         QLocalServer::removeServer(kIpcServerName);
+        // Only processes running as this OS user may send file-open requests.
+        ipcServer.setSocketOptions(QLocalServer::UserAccessOption);
         if (!ipcServer.listen(kIpcServerName))
             qWarning() << "[SingleInstance] listen failed:" << ipcServer.errorString();
 
@@ -135,23 +152,48 @@ int main(int argc, char* argv[])
             QLocalSocket* conn = ipcServer.nextPendingConnection();
             if (!conn)
                 return;
-            if (conn->waitForReadyRead(1000))
-            {
-                const QString path = QString::fromUtf8(conn->readAll()).trimmed();
-                qDebug() << "[SingleInstance] received open request:" << path;
+            conn->setReadBufferSize(kMaxIpcPayload + 1);
 
-                // Restore + bring the existing window to the foreground.
-                if (window.isMinimized())
-                    window.showNormal();
-                window.show();
-                window.raise();
-                window.activateWindow();
+            auto payload = std::make_shared<QByteArray>();
+            auto overflow = std::make_shared<bool>(false);
+            const auto consume = [conn, payload, overflow]() {
+                const qint64 room = kMaxIpcPayload + 1 - payload->size();
+                if (room > 0)
+                    payload->append(conn->read(room));
+                if (payload->size() > kMaxIpcPayload
+                    || conn->bytesAvailable() > 0)
+                {
+                    *overflow = true;
+                    conn->abort();
+                }
+            };
 
-                if (!path.isEmpty())
-                    window.openExternalFile(path);
-            }
-            conn->disconnectFromServer();
-            conn->deleteLater();
+            QObject::connect(conn, &QLocalSocket::readyRead, conn, consume);
+            QObject::connect(conn, &QLocalSocket::disconnected, conn,
+                [conn, payload, overflow, consume, &window]() {
+                    consume();
+                    if (*overflow)
+                    {
+                        qWarning() << "[SingleInstance] rejected oversized request";
+                        conn->deleteLater();
+                        return;
+                    }
+
+                    const QString path = QString::fromUtf8(*payload).trimmed();
+                    qDebug() << "[SingleInstance] received open request:" << path;
+
+                    // Restore + bring the existing window to the foreground.
+                    if (window.isMinimized())
+                        window.showNormal();
+                    window.show();
+                    window.raise();
+                    window.activateWindow();
+
+                    if (!path.isEmpty())
+                        window.openExternalFile(path);
+                    conn->deleteLater();
+                });
+            consume();
         });
 
         window.show();

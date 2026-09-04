@@ -63,11 +63,17 @@ OptionsDialog::OptionsDialog(QList<QAction*> actions, QWidget* parent)
     setMinimumSize(800, 600);
     resize(900, 700);
 
-    // Snapshot the defaults before the user touches anything — so the
-    // "기본값 복원" button actually has something to restore to.
+    // MainWindow stores the immutable compile-time default as a QAction
+    // property before persisted shortcuts are loaded. Falling back to the
+    // current shortcut keeps the dialog usable for third-party actions.
     m_defaults.reserve(m_actions.size());
     for (QAction* a : m_actions)
-        m_defaults.append(a->shortcut());
+    {
+        const QVariant stored = a->property("defaultShortcut");
+        m_defaults.append(stored.isValid()
+            ? QKeySequence(stored.toString(), QKeySequence::PortableText)
+            : a->shortcut());
+    }
 
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(10, 10, 10, 10);
