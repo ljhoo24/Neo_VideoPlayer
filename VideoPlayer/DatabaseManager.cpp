@@ -299,9 +299,13 @@ bool DatabaseManager::bumpToFront(int id)
     if (!m_initialized)
         return false;
 
+    // Millisecond precision (vs. the second-precision INSERT default) so a
+    // bumped row sorts strictly above rows inserted in the same second —
+    // "2026-01-01 12:00:00.123" > "2026-01-01 12:00:00" as text — and so
+    // successive bumps keep their relative order.
     QSqlQuery q(m_db);
     q.prepare("UPDATE media_files "
-              "SET date_added = datetime('now', 'localtime') "
+              "SET date_added = strftime('%Y-%m-%d %H:%M:%f', 'now', 'localtime') "
               "WHERE id = :id");
     q.bindValue(":id", id);
 
@@ -311,6 +315,23 @@ bool DatabaseManager::bumpToFront(int id)
         return false;
     }
     return true;
+}
+
+bool DatabaseManager::addMediaFileToFront(const QString& filePath,
+                                          const QString& thumbnailPath,
+                                          bool* inserted)
+{
+    const bool wasInserted = addMediaFile(filePath, thumbnailPath);
+    if (inserted)
+        *inserted = wasInserted;
+
+    // addMediaFile returns false for both "already exists" and "error";
+    // looking the row up tells the two apart.
+    const auto item = getMediaByPath(filePath);
+    if (!item.has_value())
+        return false;
+
+    return bumpToFront(item->id);
 }
 
 bool DatabaseManager::removeMediaFile(int id)

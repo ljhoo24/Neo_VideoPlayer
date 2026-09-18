@@ -380,6 +380,11 @@ private:
     void refreshPlaylist();
     void playItemAtRow(int row);
 
+    // Add dropped videos (new → insert, existing → bump) to the front of
+    // the playlist, in order. Returns the number of NEW rows; *bumpedOut
+    // receives how many existing rows were moved. Does not refresh the view.
+    int addVideosToFront(const QStringList& paths, int* bumpedOut = nullptr);
+
     // "이어보기": persist the OUTGOING playing item's position before we
     // switch away from it (or shut down). Saves only when the position is
     // sane (> 0 and strictly before the end) to avoid clobbering a good

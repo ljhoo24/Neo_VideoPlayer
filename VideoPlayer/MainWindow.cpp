@@ -990,6 +990,53 @@ static QStringList videoNameFilters()
     return out;
 }
 
+// Expand a drag-and-drop payload into the list of video files it names,
+// in drop order. Folders are walked recursively (same filters as the
+// "폴더 추가" scan); non-local URLs and non-video files are ignored.
+static QStringList collectDroppedVideos(const QMimeData* mime)
+{
+    QStringList out;
+    if (!mime || !mime->hasUrls())
+        return out;
+
+    const QSet<QString> videoExts =
+        QSet<QString>(videoExtensions().begin(), videoExtensions().end());
+
+    for (const QUrl& url : mime->urls())
+    {
+        if (!url.isLocalFile()) continue;
+        const QString path = url.toLocalFile();
+        const QFileInfo fi(path);
+
+        if (fi.isDir())
+        {
+            QDirIterator it(path,
+                            videoNameFilters(),
+                            QDir::Files | QDir::Readable,
+                            QDirIterator::Subdirectories
+                              | QDirIterator::FollowSymlinks);
+            while (it.hasNext())
+                out << it.next();
+        }
+        else if (videoExts.contains(fi.suffix().toLower()))
+        {
+            out << path;
+        }
+    }
+    return out;
+}
+
+// Status-bar text for a drop: how many files were new vs. already in the
+// library (and therefore only moved to the top).
+static QString dropSummary(int added, int bumped)
+{
+    if (added > 0 && bumped > 0)
+        return QString("%1개 파일 추가됨 · 기존 %2개 맨 위로 이동").arg(added).arg(bumped);
+    if (added > 0)
+        return QString("%1개 파일 추가됨").arg(added);
+    return QString("기존 %1개 맨 위로 이동").arg(bumped);
+}
+
 // Assembled filter string for QFileDialog.  Kept as a helper so the
 // dialog filter and the recursive scan always agree on the extension
 // list.
@@ -4126,43 +4173,14 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
             {
                 de->acceptProposedAction();
 
-                const QSet<QString> videoExts =
-                    QSet<QString>(videoExtensions().begin(), videoExtensions().end());
+                int bumped = 0;
+                const int added = addVideosToFront(
+                    collectDroppedVideos(de->mimeData()), &bumped);
 
-                int added = 0;
-                for (const QUrl& url : de->mimeData()->urls())
-                {
-                    if (!url.isLocalFile()) continue;
-                    const QString path = url.toLocalFile();
-                    const QFileInfo fi(path);
-
-                    if (fi.isDir())
-                    {
-                        // Recursively add all video files in the folder.
-                        QDirIterator it(path,
-                                        videoNameFilters(),
-                                        QDir::Files | QDir::Readable,
-                                        QDirIterator::Subdirectories
-                                          | QDirIterator::FollowSymlinks);
-                        while (it.hasNext())
-                        {
-                            const QString f = it.next();
-                            if (m_db.addMediaFile(f, findIndexSheetFor(f)))
-                                ++added;
-                        }
-                    }
-                    else if (videoExts.contains(fi.suffix().toLower()))
-                    {
-                        if (m_db.addMediaFile(path, findIndexSheetFor(path)))
-                            ++added;
-                    }
-                }
-
-                if (added > 0)
+                if (added + bumped > 0)
                 {
                     refreshPlaylist();
-                    statusBar()->showMessage(
-                        QString("%1개 파일 추가됨").arg(added), 3000);
+                    statusBar()->showMessage(dropSummary(added, bumped), 3000);
                 }
                 return true;
             }
@@ -4191,49 +4209,18 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
             {
                 de->acceptProposedAction();
 
-                const QSet<QString> videoExts =
-                    QSet<QString>(videoExtensions().begin(), videoExtensions().end());
+                const QStringList videos = collectDroppedVideos(de->mimeData());
+                int bumped = 0;
+                const int added = addVideosToFront(videos, &bumped);
 
-                QString firstVideo;
-                int added = 0;
-                for (const QUrl& url : de->mimeData()->urls())
+                if (!videos.isEmpty())
                 {
-                    if (!url.isLocalFile()) continue;
-                    const QString path = url.toLocalFile();
-                    const QFileInfo fi(path);
-
-                    if (fi.isDir())
-                    {
-                        QDirIterator it(path,
-                                        videoNameFilters(),
-                                        QDir::Files | QDir::Readable,
-                                        QDirIterator::Subdirectories
-                                          | QDirIterator::FollowSymlinks);
-                        while (it.hasNext())
-                        {
-                            const QString f = it.next();
-                            if (m_db.addMediaFile(f, findIndexSheetFor(f)))
-                                ++added;
-                            if (firstVideo.isEmpty())
-                                firstVideo = f;
-                        }
-                    }
-                    else if (videoExts.contains(fi.suffix().toLower()))
-                    {
-                        if (m_db.addMediaFile(path, findIndexSheetFor(path)))
-                            ++added;
-                        if (firstVideo.isEmpty())
-                            firstVideo = path;
-                    }
-                }
-
-                if (!firstVideo.isEmpty())
-                {
-                    // Adds-front + plays + refreshes the playlist.
-                    openExternalFile(firstVideo);
-                    if (added > 0)
+                    // Bumps the first file once more (now topmost), plays
+                    // it and refreshes the playlist.
+                    openExternalFile(videos.first());
+                    if (added + bumped > 0)
                         statusBar()->showMessage(
-                            QString("%1개 파일 추가됨 · 재생 시작").arg(added), 3000);
+                            dropSummary(added, bumped) + " · 재생 시작", 3000);
                 }
                 return true;
             }
@@ -4525,6 +4512,31 @@ void MainWindow::updateThumbnailDisplay(const QString& path)
 void MainWindow::refreshPlaylist()
 {
     m_playlistModel->loadFromDatabase(m_db);
+}
+
+// Register dropped videos and surface them at the top of the playlist.
+// Files already in the library are not duplicated, just bumped to the
+// front — otherwise dropping a folder whose videos were scanned earlier
+// appears to add "only one" (the one that gets played), with the rest
+// stranded deep in the list at their old date_added.
+//
+// Iterated in REVERSE so the last bump (highest date_added) is the first
+// dropped file: the group ends up on top in its natural order.
+int MainWindow::addVideosToFront(const QStringList& paths, int* bumpedOut)
+{
+    int added  = 0;
+    int bumped = 0;
+    for (auto it = paths.crbegin(); it != paths.crend(); ++it)
+    {
+        bool inserted = false;
+        if (!m_db.addMediaFileToFront(*it, findIndexSheetFor(*it), &inserted))
+            continue;
+        if (inserted) ++added;
+        else          ++bumped;
+    }
+    if (bumpedOut)
+        *bumpedOut = bumped;
+    return added;
 }
 
 // "이어보기": persist the position of whatever is currently playing.

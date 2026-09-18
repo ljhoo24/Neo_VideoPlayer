@@ -76,6 +76,14 @@ public:
     // opened from outside the app so the just-played video jumps to the top.
     [[nodiscard]] bool bumpToFront(int id);
 
+    // addMediaFile + bumpToFront in one step: registers the file if it is
+    // new and moves it to the front of the playlist either way. Returns
+    // false only on a database error. *inserted (optional) reports whether
+    // a new row was created (true) or an existing one was re-surfaced.
+    [[nodiscard]] bool addMediaFileToFront(const QString& filePath,
+                                           const QString& thumbnailPath = QLatin1String(""),
+                                           bool* inserted = nullptr);
+
     // ---- Read operations ----
     [[nodiscard]] std::vector<MediaItem> getAllMedia()                          const;
     [[nodiscard]] std::vector<MediaItem> searchMedia(const QString& query)     const;

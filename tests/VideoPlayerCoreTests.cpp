@@ -22,6 +22,7 @@ private slots:
     void cleanup();
 
     void databaseRejectsDuplicatesAndFindsRows();
+    void addingAnExistingFileToFrontReordersIt();
     void metadataUpdateIsAtomic();
     void bookmarksFollowMediaLifetime();
     void legacyDatabaseIsMigrated();
@@ -84,6 +85,37 @@ void VideoPlayerCoreTests::databaseRejectsDuplicatesAndFindsRows()
     QVERIFY(byId.has_value());
     QCOMPARE(byId->filePath, path);
     QCOMPARE(m_db->getAllMedia().size(), std::size_t{1});
+}
+
+void VideoPlayerCoreTests::addingAnExistingFileToFrontReordersIt()
+{
+    // Three rows inserted within the same second share a date_added
+    // value, so the playlist order among them is undefined.
+    const MediaItem a = addMedia("a.mp4");
+    const MediaItem b = addMedia("b.mp4");
+    const MediaItem c = addMedia("c.mp4");
+    QVERIFY(a.id > 0 && b.id > 0 && c.id > 0);
+
+    // Re-adding an existing file must NOT insert a duplicate, but it must
+    // still move the row to the front (a dropped folder whose videos are
+    // already in the library should surface all of them at the top).
+    bool inserted = true;
+    QVERIFY(m_db->addMediaFileToFront(mediaPath("b.mp4"), {}, &inserted));
+    QVERIFY(!inserted);
+
+    auto all = m_db->getAllMedia();
+    QCOMPARE(all.size(), std::size_t(3));
+    QCOMPARE(all.front().id, b.id);
+
+    // A brand-new file goes to the front as well and reports insertion.
+    inserted = false;
+    QVERIFY(m_db->addMediaFileToFront(mediaPath("d.mp4"), {}, &inserted));
+    QVERIFY(inserted);
+
+    all = m_db->getAllMedia();
+    QCOMPARE(all.size(), std::size_t(4));
+    QCOMPARE(all.front().filePath, mediaPath("d.mp4"));
+    QCOMPARE(all[1].id, b.id);
 }
 
 void VideoPlayerCoreTests::metadataUpdateIsAtomic()
