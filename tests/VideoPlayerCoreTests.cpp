@@ -2,6 +2,7 @@
 #include "PlaylistModel.h"
 
 #include <QColor>
+#include <QFile>
 #include <QFont>
 #include <QImage>
 #include <QPixmap>
@@ -25,6 +26,8 @@ private slots:
     void addingAnExistingFileToFrontReordersIt();
     void metadataUpdateIsAtomic();
     void bookmarksFollowMediaLifetime();
+    void clearingPlaylistRemovesHiddenEntriesButPreservesFiles();
+    void clearingPlaylistRollsBackOnFailure();
     void legacyDatabaseIsMigrated();
     void playlistFilteringAndUpdatesStayConsistent();
     void thumbnailCacheRefreshesAnOverwrittenPath();
@@ -161,6 +164,90 @@ void VideoPlayerCoreTests::bookmarksFollowMediaLifetime()
     QVERIFY(!m_db->getMediaById(item.id).has_value());
     QVERIFY(m_db->getBookmarks(item.id).empty());
     QVERIFY(!m_db->removeMediaFile(item.id));
+}
+
+void VideoPlayerCoreTests::clearingPlaylistRemovesHiddenEntriesButPreservesFiles()
+{
+    const QByteArray contents("original file contents");
+    const QString thumbnailPath = mediaPath("thumbnail.png");
+    const QStringList paths = { mediaPath("visible.mp4"),
+                                mediaPath("hidden.mp4"), thumbnailPath };
+    for (const QString& path : paths)
+    {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(contents), qint64(contents.size()));
+    }
+
+    const MediaItem visible = addMedia("visible.mp4", thumbnailPath);
+    const MediaItem hidden = addMedia("hidden.mp4");
+    QVERIFY(visible.id > 0 && hidden.id > 0);
+    QVERIFY(m_db->updateMetadata(visible.id, 90, "memo"));
+    QVERIFY(m_db->addBookmark(visible.id, 10.0, "first") > 0);
+    QVERIFY(m_db->addBookmark(hidden.id, 20.0, "second") > 0);
+
+    PlaylistModel model;
+    model.loadFromDatabase(*m_db);
+    model.setFilter("visible");
+    model.setMinRating(80);
+    QCOMPARE(model.rowCount(), 1);
+    QCOMPARE(model.totalItemCount(), 2);
+    model.setFilter("no matches");
+    QCOMPARE(model.rowCount(), 0);
+    QCOMPARE(model.totalItemCount(), 2);
+
+    QVERIFY(m_db->clearPlaylist());
+    QVERIFY(m_db->getAllMedia().empty());
+    QVERIFY(m_db->getBookmarks(visible.id).empty());
+    QVERIFY(m_db->getBookmarks(hidden.id).empty());
+    model.loadFromDatabase(*m_db);
+    QCOMPARE(model.totalItemCount(), 0);
+    model.setFilter({});
+    model.setMinRating(0);
+    QCOMPARE(model.rowCount(), 0);
+
+    for (const QString& path : paths)
+    {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), contents);
+    }
+    QVERIFY(m_db->clearPlaylist()); // Empty libraries are also safe to clear.
+    const MediaItem readded = addMedia("visible.mp4");
+    // IDs must not be reused while old asynchronous thumbnail jobs wind down.
+    QVERIFY(readded.id > hidden.id);
+    QVERIFY(m_db->getBookmarks(readded.id).empty());
+}
+
+void VideoPlayerCoreTests::clearingPlaylistRollsBackOnFailure()
+{
+    const MediaItem first = addMedia("first.mp4");
+    const MediaItem second = addMedia("second.mp4");
+    QVERIFY(first.id > 0 && second.id > 0);
+    QVERIFY(m_db->addBookmark(first.id, 5.0, "keep first") > 0);
+    QVERIFY(m_db->addBookmark(second.id, 6.0, "keep second") > 0);
+
+    // Fail the media delete after the bookmark delete has already run, so
+    // this verifies rollback of the complete operation, not just one query.
+    const QString connection = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    {
+        QSqlDatabase control = QSqlDatabase::addDatabase("QSQLITE", connection);
+        control.setDatabaseName(m_tempDir->filePath("library.sqlite"));
+        QVERIFY(control.open());
+        QSqlQuery query(control);
+        QVERIFY(query.exec(QString(
+            "CREATE TRIGGER prevent_clear BEFORE DELETE ON media_files "
+            "WHEN OLD.id = %1 BEGIN SELECT RAISE(ABORT, 'test failure'); END")
+            .arg(second.id)));
+    }
+    QSqlDatabase::removeDatabase(connection);
+
+    QVERIFY(!m_db->clearPlaylist());
+    QCOMPARE(m_db->getAllMedia().size(), std::size_t{2});
+    QVERIFY(m_db->getMediaById(first.id).has_value());
+    QVERIFY(m_db->getMediaById(second.id).has_value());
+    QCOMPARE(m_db->getBookmarks(first.id).size(), std::size_t{1});
+    QCOMPARE(m_db->getBookmarks(second.id).size(), std::size_t{1});
 }
 
 void VideoPlayerCoreTests::legacyDatabaseIsMigrated()

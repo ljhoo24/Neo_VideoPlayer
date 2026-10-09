@@ -383,6 +383,38 @@ bool DatabaseManager::removeMediaFile(int id)
     return true;
 }
 
+bool DatabaseManager::clearPlaylist()
+{
+    if (!m_initialized)
+        return false;
+
+    if (!m_db.transaction())
+    {
+        qWarning() << "[DB] clearPlaylist: begin transaction failed:"
+                   << m_db.lastError().text();
+        return false;
+    }
+
+    // Explicit bookmark cleanup also supports old databases without an
+    // ON DELETE CASCADE constraint. Keep both deletes in one transaction.
+    QSqlQuery q(m_db);
+    if (!q.exec("DELETE FROM bookmarks") || !q.exec("DELETE FROM media_files"))
+    {
+        qWarning() << "[DB] clearPlaylist failed:" << q.lastError().text();
+        m_db.rollback();
+        return false;
+    }
+
+    if (!m_db.commit())
+    {
+        qWarning() << "[DB] clearPlaylist: commit failed:"
+                   << m_db.lastError().text();
+        m_db.rollback();
+        return false;
+    }
+    return true;
+}
+
 // ============================================================
 // Bookmarks
 // ============================================================

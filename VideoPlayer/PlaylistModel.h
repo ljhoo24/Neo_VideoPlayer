@@ -44,6 +44,10 @@ public:
     void setPlaybackState(int mediaId, double progress);
     void clearThumbnailCache();
     [[nodiscard]] int minRating() const noexcept { return m_minRating; }
+    [[nodiscard]] int totalItemCount() const noexcept
+    {
+        return static_cast<int>(m_allItems.size());
+    }
     void updateItem(const MediaItem& updated);
 
     [[nodiscard]] std::optional<MediaItem> itemAt(int row) const;

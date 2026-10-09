@@ -62,6 +62,7 @@ private slots:
     void onAddFiles();
     void onAddFolder();
     void onRemoveSelected();
+    void onClearPlaylist();
     void onSearchTextChanged(const QString& text);
     void onPlaylistItemSelected(const QModelIndex& current, const QModelIndex& previous);
     void onPlaylistItemDoubleClicked(const QModelIndex& index);
@@ -181,6 +182,7 @@ private:
     QPushButton* m_addButton{nullptr};
     QPushButton* m_addFolderButton{nullptr};
     QPushButton* m_removeButton{nullptr};
+    QPushButton* m_clearPlaylistButton{nullptr};
 
     // ---- Right panel / controls bar widgets ----
     QPushButton* m_prevButton{nullptr};

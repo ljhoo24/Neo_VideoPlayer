@@ -1474,6 +1474,29 @@ QWidget* MainWindow::buildLeftPanel()
     // ---- Playlist ----
     m_playlistModel = new PlaylistModel(this);
 
+    auto* playlistHeader = new QHBoxLayout;
+    auto* playlistTitle = new QLabel("재생목록", panel);
+    playlistTitle->setProperty("sectionTitle", true);
+    playlistHeader->addWidget(playlistTitle);
+    playlistHeader->addStretch();
+
+    m_clearPlaylistButton = new QPushButton("전체 삭제", panel);
+    m_clearPlaylistButton->setObjectName("ClearPlaylistButton");
+    m_clearPlaylistButton->setIcon(
+        Icons::icon(Icons::Delete, ThemeManager::danger(), 18));
+    m_clearPlaylistButton->setToolTip(
+        "검색·평점 필터에 숨겨진 항목을 포함해 재생목록 전체 삭제\n"
+        "원본 영상 파일은 삭제하지 않습니다");
+    m_clearPlaylistButton->setFocusPolicy(Qt::NoFocus);
+    m_clearPlaylistButton->setEnabled(false);
+    connect(m_clearPlaylistButton, &QPushButton::clicked,
+            this, &MainWindow::onClearPlaylist);
+    connect(m_playlistModel, &QAbstractItemModel::modelReset, this, [this] {
+        m_clearPlaylistButton->setEnabled(m_playlistModel->totalItemCount() > 0);
+    });
+    playlistHeader->addWidget(m_clearPlaylistButton);
+    layout->addLayout(playlistHeader);
+
     m_playlistView = new QListView;
     m_playlistView->setModel(m_playlistModel);
     m_playlistView->setItemDelegate(new PlaylistItemDelegate(m_playlistView));
@@ -2350,6 +2373,61 @@ void MainWindow::onRemoveSelected()
 
     statusBar()->showMessage(
         QString("선택한 %1개 항목을 삭제했습니다").arg(removed), 4000);
+}
+
+void MainWindow::onClearPlaylist()
+{
+    const int total = m_playlistModel->totalItemCount();
+    if (total == 0)
+        return;
+
+    const auto answer = QMessageBox::question(
+        this, "재생목록 전체 삭제",
+        QString("재생목록의 모든 항목 %1개를 삭제할까요?\n\n"
+                "검색·평점 필터에 숨겨진 항목도 모두 삭제됩니다.\n"
+                "저장된 평점, 메모, 북마크와 이어보기 정보도 삭제됩니다.\n"
+                "원본 영상 파일은 삭제되지 않습니다.")
+            .arg(total),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer != QMessageBox::Yes)
+        return;
+
+    // Only reset the UI once the transaction has succeeded. A database
+    // error must retain both the library and any unsaved metadata edits.
+    if (!m_db.clearPlaylist())
+    {
+        QMessageBox::warning(this, "전체 삭제 실패",
+            "재생목록을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+        return;
+    }
+
+    cancelAutoThumbnailJob(false);
+    m_mpvWidget->stop();
+    m_playingItem.reset();
+    m_currentItem.reset();
+    m_metaDirty = false;
+    m_metaDirtyForId = 0;
+    m_pendingResumePos = 0.0;
+    m_pointA.reset();
+    m_pointB.reset();
+    updateABButtons();
+    m_playlistModel->setPlaybackState(0, -1.0);
+    m_userSeeking = false;
+    onDurationChanged(0.0);
+    onPauseStateChanged(true);
+    updateFsTitle();
+    m_seekPreviewSheet = QPixmap();
+    m_seekPreviewSheetPath.clear();
+    if (m_seekPreview)
+        m_seekPreview->hide();
+
+    m_ratingSpinBox->setValue(0);
+    m_memoEdit->clear();
+    m_bookmarkList->clear();
+    updateThumbnailDisplay({});
+    QSettings().remove("playback/lastPlayedId");
+    refreshPlaylist();
+    statusBar()->showMessage("재생목록 전체를 삭제했습니다", 4000);
 }
 
 void MainWindow::onSearchTextChanged(const QString& text)
@@ -3430,6 +3508,8 @@ void MainWindow::refreshIcons()
     if (m_addButton)        m_addButton->setIcon(Icons::icon(Icons::Add, normal, 20));
     if (m_addFolderButton)  m_addFolderButton->setIcon(Icons::icon(Icons::FolderOpen, normal, 20));
     if (m_removeButton)     m_removeButton->setIcon(Icons::icon(Icons::Delete, ThemeManager::danger(), 20));
+    if (m_clearPlaylistButton)
+        m_clearPlaylistButton->setIcon(Icons::icon(Icons::Delete, ThemeManager::danger(), 18));
 
     if (m_importThumbButton) m_importThumbButton->setIcon(Icons::icon(Icons::Image, normal, 18));
     if (m_autoThumbButton)   m_autoThumbButton->setIcon(Icons::icon(Icons::AutoFixHigh, normal, 18));

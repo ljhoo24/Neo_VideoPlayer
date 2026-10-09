@@ -63,6 +63,8 @@ public:
     [[nodiscard]] bool setResumePos(int id, double seconds);
     [[nodiscard]] bool updateThumbnail(int id, const QString& thumbnailPath);
     [[nodiscard]] bool removeMediaFile(int id);
+    // Atomically clear every playlist entry and bookmark; never touch files.
+    [[nodiscard]] bool clearPlaylist();
 
     // ---- Bookmarks (per-video timestamp markers) ----
     // addBookmark returns the new row id, or -1 on failure.
