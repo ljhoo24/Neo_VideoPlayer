@@ -89,6 +89,10 @@ powershell -ExecutionPolicy Bypass -File scripts/run-tests.ps1
 ISCC.exe /DSrcDir="<build\release>" installer\VideoPlayer.iss
 ```
 
+### 앱 아이콘
+
+`icon.png`는 투명 배경의 원본이며, `icon.ico`는 탐색기·작업표시줄·앱 창·설치파일에서 공통으로 사용합니다. 원본 교체 후 Pillow가 설치된 Python으로 `python scripts/generate-icon.py`를 실행하면 16, 20, 24, 32, 40, 48, 64, 96, 128, 256px 크기가 포함된 ICO를 다시 만듭니다.
+
 ## 디렉터리 구조
 
 ```

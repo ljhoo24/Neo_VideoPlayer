@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QIcon>
 #include <QStringList>
 #include <QStyleFactory>
 #include <QLocalServer>
@@ -68,7 +69,8 @@ int main(int argc, char* argv[])
 
     app.setApplicationName("VideoPlayer");
     app.setOrganizationName("CustomMedia");
-    app.setApplicationVersion("1.0.12");
+    app.setApplicationVersion("1.0.13");
+    app.setWindowIcon(QIcon(QStringLiteral(":/app/icon.ico")));
 
     // ---- Open log file before anything else ----
     {

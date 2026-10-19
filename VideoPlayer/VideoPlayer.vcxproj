@@ -175,7 +175,7 @@ copy /Y "$(ProjectDir)shaders\NVScaler.glsl" "$(OutDir)shaders\"
       <Message>RCC %(Filename).qrc</Message>
       <Command>"$(Qt6Bin)\rcc.exe" "%(FullPath)" -o "$(ProjectDir)generated\qrc_resources.cpp"</Command>
       <Outputs>$(ProjectDir)generated\qrc_resources.cpp</Outputs>
-      <AdditionalInputs>%(FullPath);$(ProjectDir)resources\theme.qss;$(ProjectDir)resources\fonts\MaterialIcons-Regular.ttf</AdditionalInputs>
+      <AdditionalInputs>%(FullPath);$(ProjectDir)resources\theme.qss;$(ProjectDir)resources\fonts\MaterialIcons-Regular.ttf;$(ProjectDir)..\icon.ico</AdditionalInputs>
     </CustomBuild>
     <CustomBuild Include="MainWindow.h">
       <Message>MOC %(Filename).h</Message>

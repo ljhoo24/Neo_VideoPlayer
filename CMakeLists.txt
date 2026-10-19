@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(VideoPlayer
-    VERSION   1.0.12
+    VERSION   1.0.13
     LANGUAGES CXX
 )
 
@@ -80,6 +80,8 @@ set(SOURCES
 
 if(WIN32)
     list(APPEND SOURCES VideoPlayer/app.rc)
+    set_source_files_properties(VideoPlayer/app.rc PROPERTIES
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/icon.ico")
 endif()
 
 set(HEADERS
