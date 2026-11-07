@@ -54,6 +54,17 @@ QPushButton[iconButton="true"] {
 QPushButton[iconButton="true"]:hover   { background-color: @BORDER@; }
 QPushButton[iconButton="true"]:pressed { background-color: @BORDER_STRONG@; }
 
+/* Side panel edge strip — full-height arrow handle beside the player */
+QPushButton#SidePanelEdge {
+    background-color: transparent;
+    border: none;
+    border-radius: 4px;
+    padding: 0;
+    min-height: 0;
+}
+QPushButton#SidePanelEdge:hover   { background-color: @BORDER@; }
+QPushButton#SidePanelEdge:pressed { background-color: @BORDER_STRONG@; }
+
 /* Primary action — the big play button + save */
 QPushButton#PrimaryButton {
     background-color: @ACCENT@;

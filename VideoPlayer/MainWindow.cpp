@@ -1360,7 +1360,33 @@ void MainWindow::setupUI()
     m_mainSplitter = splitter;
     m_leftPanel = buildLeftPanel();
     splitter->addWidget(m_leftPanel);
-    splitter->addWidget(buildRightPanel());
+
+    // Player container = [edge strip | player] (strip side follows the panel).
+    // The strip is a full-height arrow handle on the edge facing the side
+    // panel. It lives OUTSIDE the panel so it stays reachable while the
+    // panel is collapsed (it then sits at the window edge), and outside the
+    // mpv widget so the native video HWND can't paint over it.
+    m_playerContainer = new QWidget(splitter);
+    auto* playerRow = new QHBoxLayout(m_playerContainer);
+    playerRow->setContentsMargins(0, 0, 0, 0);
+    playerRow->setSpacing(0);
+
+    m_sidePanelButton = new QPushButton(m_playerContainer);
+    m_sidePanelButton->setObjectName("SidePanelEdge");
+    m_sidePanelButton->setFixedWidth(16);
+    m_sidePanelButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    m_sidePanelButton->setIconSize(QSize(18, 18));
+    m_sidePanelButton->setCursor(Qt::PointingHandCursor);
+    m_sidePanelButton->setFocusPolicy(Qt::NoFocus);
+    // Route through the QAction so the edge strip, menu item and shortcut
+    // share one code path.
+    connect(m_sidePanelButton, &QPushButton::clicked, this, [this] {
+        if (m_actToggleSidePanel)
+            m_actToggleSidePanel->trigger();
+    });
+    playerRow->addWidget(m_sidePanelButton);
+    playerRow->addWidget(buildRightPanel(), 1);
+    splitter->addWidget(m_playerContainer);
     // Stretch factors live on each widget's size policy, so they follow
     // the widgets when applySidePanelPosition() reorders the splitter.
     splitter->setStretchFactor(0, 1);   // side panel: 1 part
@@ -1820,20 +1846,6 @@ QWidget* MainWindow::buildControlsBar()
     }
 
     row->addStretch();
-
-    // ---- Side panel collapse toggle ----
-    // Icon/tooltip depend on the panel's side and state — see
-    // updateSidePanelButton(). Clicking routes through the QAction so the
-    // menu item, shortcut and button always share one code path.
-    m_sidePanelButton = makeIconButton(Icons::FirstPage, "사이드 패널 접기",
-                                       40, 24, kIcon);
-    m_sidePanelButton->setObjectName("SidePanelButton");
-    m_sidePanelButton->setFocusPolicy(Qt::NoFocus);
-    connect(m_sidePanelButton, &QPushButton::clicked, this, [this] {
-        if (m_actToggleSidePanel)
-            m_actToggleSidePanel->trigger();
-    });
-    row->addWidget(m_sidePanelButton);
 
     // ---- Overflow playback-tools panel ----
     m_moreButton = makeIconButton(Icons::MoreHoriz, "재생 도구", 40, 24, kIcon);
@@ -3453,14 +3465,27 @@ void MainWindow::applySidePanelPosition(bool onRight)
 {
     m_sidePanelOnRight = onRight;
 
-    if (m_mainSplitter && m_leftPanel && m_rightPanel)
+    if (m_mainSplitter && m_leftPanel && m_playerContainer)
     {
         // Move whichever widget belongs first to index 0. Each widget keeps
         // its splitter size and stretch factor, so the panel width survives
         // the swap (also while the panel is collapsed).
-        QWidget* first = onRight ? m_rightPanel : m_leftPanel;
+        QWidget* first = onRight ? m_playerContainer : m_leftPanel;
         if (m_mainSplitter->indexOf(first) != 0)
             m_mainSplitter->insertWidget(0, first);
+    }
+
+    // Keep the edge strip on the player's side that faces the panel.
+    if (m_playerContainer && m_sidePanelButton)
+    {
+        if (auto* row = qobject_cast<QHBoxLayout*>(m_playerContainer->layout()))
+        {
+            row->removeWidget(m_sidePanelButton);
+            if (onRight)
+                row->addWidget(m_sidePanelButton);
+            else
+                row->insertWidget(0, m_sidePanelButton);
+        }
     }
 
     updateSidePanelButton();
@@ -3476,8 +3501,8 @@ void MainWindow::updateSidePanelButton()
     // away from it to expand.
     const bool pointLeft = (shown != m_sidePanelOnRight);
     m_sidePanelButton->setIcon(Icons::icon(
-        pointLeft ? Icons::FirstPage : Icons::LastPage,
-        ThemeManager::iconColor(), 24));
+        pointLeft ? Icons::ChevronLeft : Icons::ChevronRight,
+        ThemeManager::iconMuted(), 18));
 
     QString tip = shown ? QStringLiteral("사이드 패널 접기")
                         : QStringLiteral("사이드 패널 펴기");
@@ -3487,8 +3512,8 @@ void MainWindow::updateSidePanelButton()
     m_sidePanelButton->setToolTip(tip);
     m_sidePanelButton->setAccessibleName(tip);
 
-    // Fullscreen / mini hide the panel themselves — drop the button there
-    // (saves room in the compact mini controls bar) and disable the action.
+    // Fullscreen / mini hide the panel themselves — drop the edge strip
+    // there (no stray bar beside the video) and disable the action.
     const bool enabled = !m_miniMode && !isFullScreen();
     m_sidePanelButton->setVisible(enabled);
     if (m_actToggleSidePanel)

@@ -47,8 +47,8 @@ inline constexpr char16_t BookmarkAdd = 0xe598;   // add bookmark at current pos
 inline constexpr char16_t ExpandMore  = 0xe5cf;   // collapsed disclosure
 inline constexpr char16_t ExpandLess  = 0xe5ce;   // expanded disclosure
 inline constexpr char16_t MoreHoriz   = 0xe5d3;   // overflow / more tools
-inline constexpr char16_t FirstPage   = 0xe5dc;   // side panel: collapse/expand leftward
-inline constexpr char16_t LastPage    = 0xe5dd;   // side panel: collapse/expand rightward
+inline constexpr char16_t ChevronLeft  = 0xe5cb;  // side panel edge strip
+inline constexpr char16_t ChevronRight = 0xe5cc;  // side panel edge strip
 
 // Load the embedded font once at startup. Returns the resolved family
 // name (empty on failure). Safe to call multiple times.

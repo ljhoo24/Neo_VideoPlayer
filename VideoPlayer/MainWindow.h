@@ -147,6 +147,7 @@ private:
     // can sit on either side of the player (see applySidePanelPosition).
     QWidget*         m_leftPanel{nullptr};
     QSplitter*       m_mainSplitter{nullptr};
+    QWidget*         m_playerContainer{nullptr};  // [edge strip | m_rightPanel]
     QWidget*         m_rightPanel{nullptr};
     QWidget*         m_controlsBar{nullptr};
     QLabel*          m_fsTitleLabel{nullptr};  // top OSD title overlay (fullscreen only)
@@ -208,7 +209,7 @@ private:
     QPushButton* m_frameBackButton{nullptr};
     QPushButton* m_frameFwdButton{nullptr};
     QPushButton* m_moreButton{nullptr};
-    QPushButton* m_sidePanelButton{nullptr};   // 사이드 패널 접기/펴기
+    QPushButton* m_sidePanelButton{nullptr};   // 사이드 패널 접기/펴기 (edge strip)
 
     // ---- QActions (own their shortcuts — registered in createActions) ----
     // Every action customisable from the Options dialog must be kept in
