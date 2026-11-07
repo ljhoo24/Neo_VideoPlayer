@@ -256,6 +256,20 @@ void OptionsDialog::buildGeneralTab()
             this, [this](int idx) { m_playlistGridMode = (idx == 1); });
     listForm->addRow("표시 방식", m_playlistViewCombo);
 
+    // 패널 위치 — 재생목록/상세 정보 패널을 플레이어 왼쪽 또는 오른쪽에 배치.
+    // Index 0 = 왼쪽, index 1 = 오른쪽, mirrored into m_sidePanelOnRight.
+    m_sidePanelPosCombo = new QComboBox(listGroup);
+    m_sidePanelPosCombo->addItem("왼쪽");     // index 0 → onRight = false
+    m_sidePanelPosCombo->addItem("오른쪽");   // index 1 → onRight = true
+    m_sidePanelPosCombo->setToolTip(
+        "재생목록 패널을 플레이어의 왼쪽 또는 오른쪽에 배치합니다.\n"
+        "OK 누르면 즉시 반영됩니다. 패널 접기/펴기는 Ctrl+L.");
+    m_sidePanelPosCombo->setCurrentIndex(m_sidePanelOnRight ? 1 : 0);
+    connect(m_sidePanelPosCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int idx) { m_sidePanelOnRight = (idx == 1); });
+    listForm->addRow("패널 위치", m_sidePanelPosCombo);
+
     vl->addWidget(listGroup);
 
     // ---- 테마 그룹 ----
@@ -410,6 +424,13 @@ void OptionsDialog::setPlaylistGridMode(bool grid)
     m_playlistGridMode = grid;
     if (m_playlistViewCombo)
         m_playlistViewCombo->setCurrentIndex(grid ? 1 : 0);
+}
+
+void OptionsDialog::setSidePanelOnRight(bool onRight)
+{
+    m_sidePanelOnRight = onRight;
+    if (m_sidePanelPosCombo)
+        m_sidePanelPosCombo->setCurrentIndex(onRight ? 1 : 0);
 }
 
 void OptionsDialog::setNisSharpness(double value)

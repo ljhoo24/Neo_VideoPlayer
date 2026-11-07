@@ -60,6 +60,11 @@ public:
     void setPlaylistGridMode(bool grid);
     bool playlistGridMode() const noexcept { return m_playlistGridMode; }
 
+    // 사이드 패널 위치 — false = 왼쪽, true = 오른쪽. Caller seeds the current
+    // placement before exec() and reads it back after Accepted.
+    void setSidePanelOnRight(bool onRight);
+    bool sidePanelOnRight() const noexcept { return m_sidePanelOnRight; }
+
     // ---- 테마 ----
     // 테마 모드 (0 = 다크, 1 = 라이트, 2 = 자동/시스템) + 사용자 강조 색.
     // Caller seeds both from the current ThemeManager state before exec()
@@ -102,6 +107,9 @@ private:
 
     QComboBox* m_playlistViewCombo{nullptr};
     bool       m_playlistGridMode{false};   // default: 리스트
+
+    QComboBox* m_sidePanelPosCombo{nullptr};
+    bool       m_sidePanelOnRight{false};   // default: 왼쪽
 
     // 테마 위젯 — 다크/라이트 콤보 + 강조 색 선택 버튼.
     QComboBox*   m_themeCombo{nullptr};

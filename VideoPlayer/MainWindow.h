@@ -128,6 +128,7 @@ private slots:
     void onExitFullscreen();    // Esc — no-op when not fullscreen
     void onToggleAlwaysOnTop(bool on);   // 항상 위 — keep window above others
     void onToggleMiniPlayer(bool on);    // 미니 플레이어 — compact PiP mode
+    void onToggleSidePanel(bool visible); // 사이드 패널(라이브러리) 접기/펴기
 
 protected:
     void resizeEvent(QResizeEvent* e) override;
@@ -142,7 +143,10 @@ private:
     MpvPlayerWidget* m_mpvWidget{nullptr};
 
     // ---- Top-level layout blocks (for fullscreen hide/show) ----
+    // m_leftPanel is the library/side panel. Despite the historical name it
+    // can sit on either side of the player (see applySidePanelPosition).
     QWidget*         m_leftPanel{nullptr};
+    QSplitter*       m_mainSplitter{nullptr};
     QWidget*         m_rightPanel{nullptr};
     QWidget*         m_controlsBar{nullptr};
     QLabel*          m_fsTitleLabel{nullptr};  // top OSD title overlay (fullscreen only)
@@ -204,6 +208,7 @@ private:
     QPushButton* m_frameBackButton{nullptr};
     QPushButton* m_frameFwdButton{nullptr};
     QPushButton* m_moreButton{nullptr};
+    QPushButton* m_sidePanelButton{nullptr};   // 사이드 패널 접기/펴기
 
     // ---- QActions (own their shortcuts — registered in createActions) ----
     // Every action customisable from the Options dialog must be kept in
@@ -234,6 +239,7 @@ private:
     QAction* m_actExitFullscreen{nullptr};
     QAction* m_actAlwaysOnTop{nullptr};   // checkable — 항상 위
     QAction* m_actMiniPlayer{nullptr};    // checkable — 미니 플레이어
+    QAction* m_actToggleSidePanel{nullptr}; // checkable — 사이드 패널 표시
     QAction* m_actOptions{nullptr};
     QAction* m_actQuit{nullptr};
 
@@ -345,6 +351,17 @@ private:
     // selection / double-click / drag-drop wiring.
     bool m_playlistGridMode{false};
     void applyPlaylistViewMode(bool grid);
+
+    // ---- Side panel (library) collapse + placement ----
+    // m_sidePanelVisible is the user's persisted "ui/sidePanelVisible"
+    // choice. Fullscreen / mini mode hide the panel temporarily and restore
+    // to this value instead of forcing it visible. m_sidePanelOnRight
+    // mirrors "ui/sidePanelPosition" ("left" / "right").
+    bool m_sidePanelVisible{true};
+    bool m_sidePanelOnRight{false};
+    void applySidePanelPosition(bool onRight);
+    void updateSidePanelVisibility();   // apply m_sidePanelVisible (respects fs/mini)
+    void updateSidePanelButton();       // icon / tooltip / enabled state
 
     QWidget* buildRightPanel();
     QWidget* buildControlsBar();

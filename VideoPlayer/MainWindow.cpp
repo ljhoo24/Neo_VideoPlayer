@@ -1127,12 +1127,22 @@ MainWindow::MainWindow(QWidget* parent)
     m_playlistGridMode =
         (QSettings().value("ui/playlistView", "list").toString() == "grid");
 
+    // Side panel (library) collapse state + placement — read before
+    // setupUI() so the splitter is built in the right order from the start.
+    {
+        QSettings s;
+        m_sidePanelVisible = s.value("ui/sidePanelVisible", true).toBool();
+        m_sidePanelOnRight =
+            (s.value("ui/sidePanelPosition", "left").toString() == "right");
+    }
+
     setupDatabase();
     setupUI();          // UI first — m_mpvWidget must exist before createActions
     createActions();    // build QActions (and default shortcuts)
     loadShortcuts();    // override defaults with any persisted values
     setupMenuBar();     // populate menu bar with the actions
     setupConnections();
+    updateSidePanelButton();   // tooltip needs the (possibly customised) shortcut
 
     // Keep the window itself as the neutral shortcut focus target. Without
     // this, QLineEdit (the first focusable child) becomes the implicit focus
@@ -1347,15 +1357,21 @@ void MainWindow::setupUI()
     root->setSpacing(4);
 
     auto* splitter = new QSplitter(Qt::Horizontal, central);
+    m_mainSplitter = splitter;
     m_leftPanel = buildLeftPanel();
     splitter->addWidget(m_leftPanel);
     splitter->addWidget(buildRightPanel());
-    splitter->setStretchFactor(0, 1);   // left  panel: 1 part
-    splitter->setStretchFactor(1, 3);   // right panel: 3 parts
+    // Stretch factors live on each widget's size policy, so they follow
+    // the widgets when applySidePanelPosition() reorders the splitter.
+    splitter->setStretchFactor(0, 1);   // side panel: 1 part
+    splitter->setStretchFactor(1, 3);   // player    : 3 parts
     splitter->setSizes({340, 940});
     splitter->setChildrenCollapsible(false);
 
     root->addWidget(splitter);
+
+    applySidePanelPosition(m_sidePanelOnRight);
+    m_leftPanel->setVisible(m_sidePanelVisible);
 
     // ---- Fullscreen title OSD ----
     // Parented directly to the MainWindow (the top-level window), NOT to the
@@ -1804,6 +1820,20 @@ QWidget* MainWindow::buildControlsBar()
     }
 
     row->addStretch();
+
+    // ---- Side panel collapse toggle ----
+    // Icon/tooltip depend on the panel's side and state — see
+    // updateSidePanelButton(). Clicking routes through the QAction so the
+    // menu item, shortcut and button always share one code path.
+    m_sidePanelButton = makeIconButton(Icons::FirstPage, "사이드 패널 접기",
+                                       40, 24, kIcon);
+    m_sidePanelButton->setObjectName("SidePanelButton");
+    m_sidePanelButton->setFocusPolicy(Qt::NoFocus);
+    connect(m_sidePanelButton, &QPushButton::clicked, this, [this] {
+        if (m_actToggleSidePanel)
+            m_actToggleSidePanel->trigger();
+    });
+    row->addWidget(m_sidePanelButton);
 
     // ---- Overflow playback-tools panel ----
     m_moreButton = makeIconButton(Icons::MoreHoriz, "재생 도구", 40, 24, kIcon);
@@ -2768,6 +2798,14 @@ void MainWindow::createActions()
         &MainWindow::onToggleMiniPlayer);
     m_actMiniPlayer->setCheckable(true);
 
+    // ---- 사이드 패널 (라이브러리) 접기/펴기 ----
+    m_actToggleSidePanel = make(
+        "toggleSidePanel", "사이드 패널 표시",
+        QKeySequence(Qt::CTRL | Qt::Key_L),
+        &MainWindow::onToggleSidePanel);
+    m_actToggleSidePanel->setCheckable(true);
+    m_actToggleSidePanel->setChecked(m_sidePanelVisible);
+
     // ---- File / playlist ----
     m_actAddFiles = make(
         "addFiles", "파일 추가…",
@@ -2980,6 +3018,8 @@ void MainWindow::setupMenuBar()
     // checkable so the menu reflects current state; fullscreen lives in
     // 재생 for historical reasons but is echoed here for discoverability.
     auto* viewMenu = mb->addMenu("보기(&W)");
+    viewMenu->addAction(m_actToggleSidePanel);
+    viewMenu->addSeparator();
     viewMenu->addAction(m_actAlwaysOnTop);
     viewMenu->addAction(m_actMiniPlayer);
 
@@ -3092,6 +3132,9 @@ void MainWindow::onOptionsTriggered()
     // Seed the playlist view-mode combo from the current mode.
     dlg.setPlaylistGridMode(m_playlistGridMode);
 
+    // Seed the side panel placement combo.
+    dlg.setSidePanelOnRight(m_sidePanelOnRight);
+
     // Seed the 오디오 controls from the live mpv-widget state.
     dlg.setAudioNormalize(m_mpvWidget->audioNormalize());
     dlg.setBassGain(m_mpvWidget->bassGain());
@@ -3128,6 +3171,11 @@ void MainWindow::onOptionsTriggered()
         const bool grid = dlg.playlistGridMode();
         QSettings().setValue("ui/playlistView", grid ? "grid" : "list");
         applyPlaylistViewMode(grid);
+
+        // Side panel placement — persist and reorder the splitter live.
+        const bool onRight = dlg.sidePanelOnRight();
+        QSettings().setValue("ui/sidePanelPosition", onRight ? "right" : "left");
+        applySidePanelPosition(onRight);
 
         // 오디오 — push into the mpv widget (rebuilds the "af" chain) and
         // persist each knob so it survives restart.
@@ -3212,6 +3260,7 @@ void MainWindow::onToggleFullscreen()
     if (m_fsTitleLabel) m_fsTitleLabel->hide();
 
     showFullScreen();
+    updateSidePanelButton();   // hidden/disabled while fullscreen
 
     // Position the floating overlays now that the window has full-screen geometry.
     positionFsControlsBar();
@@ -3245,7 +3294,9 @@ void MainWindow::onExitFullscreen()
     if (!m_savedGeometry.isEmpty())
         restoreGeometry(m_savedGeometry);
 
-    if (m_leftPanel) m_leftPanel->setVisible(true);
+    // Restore the side panel to the user's collapse choice, not
+    // unconditionally visible.
+    updateSidePanelVisibility();
     menuBar()->setVisible(true);
     statusBar()->setVisible(true);
 }
@@ -3303,7 +3354,7 @@ void MainWindow::onToggleMiniPlayer(bool on)
         m_preMiniOnTop    = m_alwaysOnTop;
         m_miniMode        = true;
 
-        if (m_leftPanel) m_leftPanel->setVisible(false);
+        updateSidePanelVisibility();   // hidden while mini (m_miniMode set)
         menuBar()->setVisible(false);
         statusBar()->setVisible(false);
         // Keep the controls bar visible — a PiP player still needs play/seek.
@@ -3329,7 +3380,7 @@ void MainWindow::onToggleMiniPlayer(bool on)
     {
         m_miniMode = false;
 
-        if (m_leftPanel) m_leftPanel->setVisible(true);
+        updateSidePanelVisibility();   // back to the user's collapse choice
         menuBar()->setVisible(true);
         statusBar()->setVisible(true);
 
@@ -3348,6 +3399,100 @@ void MainWindow::onToggleMiniPlayer(bool on)
         QSignalBlocker block(m_actMiniPlayer);
         m_actMiniPlayer->setChecked(on);
     }
+}
+
+// ============================================================
+// Side panel (library) — collapse / expand + left/right placement
+//
+//   The panel lives in m_mainSplitter next to the player. Collapsing just
+//   hides it; QSplitter drops its handle, gives the space to the player
+//   and remembers the panel width for when it comes back.
+//   Fullscreen and mini mode hide the panel on their own, so they call
+//   updateSidePanelVisibility() on exit to return to the user's choice
+//   (m_sidePanelVisible) instead of forcing the panel visible.
+// ============================================================
+
+void MainWindow::onToggleSidePanel(bool visible)
+{
+    // Fullscreen / mini own the panel visibility; ignore the toggle there
+    // (the action and button are disabled, this only guards programmatic
+    // calls) and keep the action in sync with the real state.
+    if (isFullScreen() || m_miniMode)
+        visible = m_sidePanelVisible;
+    else if (visible != m_sidePanelVisible)
+    {
+        m_sidePanelVisible = visible;
+        QSettings().setValue("ui/sidePanelVisible", visible);
+    }
+
+    if (m_actToggleSidePanel && m_actToggleSidePanel->isChecked() != visible)
+    {
+        QSignalBlocker block(m_actToggleSidePanel);
+        m_actToggleSidePanel->setChecked(visible);
+    }
+
+    updateSidePanelVisibility();
+}
+
+void MainWindow::updateSidePanelVisibility()
+{
+    if (m_leftPanel)
+    {
+        const bool show = m_sidePanelVisible && !m_miniMode && !isFullScreen();
+        // Hiding a panel that holds keyboard focus (e.g. the search field)
+        // would strand focus — hand it back to the window so the playback
+        // shortcuts keep working.
+        if (!show && m_leftPanel->isAncestorOf(QApplication::focusWidget()))
+            setFocus(Qt::OtherFocusReason);
+        m_leftPanel->setVisible(show);
+    }
+    updateSidePanelButton();
+}
+
+void MainWindow::applySidePanelPosition(bool onRight)
+{
+    m_sidePanelOnRight = onRight;
+
+    if (m_mainSplitter && m_leftPanel && m_rightPanel)
+    {
+        // Move whichever widget belongs first to index 0. Each widget keeps
+        // its splitter size and stretch factor, so the panel width survives
+        // the swap (also while the panel is collapsed).
+        QWidget* first = onRight ? m_rightPanel : m_leftPanel;
+        if (m_mainSplitter->indexOf(first) != 0)
+            m_mainSplitter->insertWidget(0, first);
+    }
+
+    updateSidePanelButton();
+}
+
+void MainWindow::updateSidePanelButton()
+{
+    if (!m_sidePanelButton)
+        return;
+
+    const bool shown = m_sidePanelVisible;
+    // Arrow points the way the panel moves: toward its edge to collapse,
+    // away from it to expand.
+    const bool pointLeft = (shown != m_sidePanelOnRight);
+    m_sidePanelButton->setIcon(Icons::icon(
+        pointLeft ? Icons::FirstPage : Icons::LastPage,
+        ThemeManager::iconColor(), 24));
+
+    QString tip = shown ? QStringLiteral("사이드 패널 접기")
+                        : QStringLiteral("사이드 패널 펴기");
+    if (m_actToggleSidePanel && !m_actToggleSidePanel->shortcut().isEmpty())
+        tip += QStringLiteral(" (%1)").arg(
+            m_actToggleSidePanel->shortcut().toString(QKeySequence::NativeText));
+    m_sidePanelButton->setToolTip(tip);
+    m_sidePanelButton->setAccessibleName(tip);
+
+    // Fullscreen / mini hide the panel themselves — drop the button there
+    // (saves room in the compact mini controls bar) and disable the action.
+    const bool enabled = !m_miniMode && !isFullScreen();
+    m_sidePanelButton->setVisible(enabled);
+    if (m_actToggleSidePanel)
+        m_actToggleSidePanel->setEnabled(enabled);
 }
 
 // ============================================================
@@ -3530,6 +3675,7 @@ void MainWindow::refreshIcons()
     if (m_abClearButton)    m_abClearButton->setIcon(Icons::icon(Icons::Remove, normal, 20));
     if (m_screenshotButton) m_screenshotButton->setIcon(Icons::icon(Icons::PhotoCamera, normal, 22));
     if (m_moreButton)       m_moreButton->setIcon(Icons::icon(Icons::MoreHoriz, normal, 24));
+    updateSidePanelButton();
 
     // Grid placeholders are drawn from the active QPalette, so invalidate
     // cached pixmaps whenever the theme changes.
